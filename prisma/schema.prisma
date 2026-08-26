@@ -1,0 +1,298 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SALESPERSON
+}
+
+enum Location {
+  WAREHOUSE
+  SHOP
+}
+
+enum SaleType {
+  WHOLESALE
+  SHOP_TRANSFER
+  RETAIL
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  CREDIT
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CHECK
+  OTHER
+}
+
+enum ExpenseCategory {
+  WAREHOUSE
+  SHOP
+  TAX
+  OTHER
+}
+
+enum LedgerType {
+  COLLECTION
+  EXPENSE
+  ADJUSTMENT
+  HANDOVER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(SALESPERSON)
+  isActive     Boolean  @default(true)
+  shopId       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  shop               Shop?                @relation(fields: [shopId], references: [id], onDelete: SetNull)
+  wholesaleSales     Sale[]               @relation("WholesaleSales")
+  retailSales        Sale[]               @relation("RetailSales")
+  ledgerEntries      SalespersonLedger[]
+  expensesPaid       Expense[]            @relation("ExpensePaidBy")
+  createdImports Import[] @relation("ImportCreatedBy")
+}
+
+model Shop {
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  phone     String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users   User[]
+  cartons Carton[]
+  sales   Sale[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+}
+
+model Import {
+  id           String   @id @default(cuid())
+  batchNumber  String   @unique
+  importDate   DateTime @default(now())
+  customCost   Decimal  @default(0) @db.Decimal(12, 2)
+  creditAmount     Decimal  @default(0) @db.Decimal(12, 2)
+  creditPaidAmount Decimal  @default(0) @db.Decimal(12, 2)
+  creditPaid       Boolean  @default(false)
+  notes        String?
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdBy     User                 @relation("ImportCreatedBy", fields: [createdById], references: [id])
+  products      ImportProduct[]
+  costs         ImportCost[]
+  creditPersons ImportCreditPerson[]
+}
+
+model ImportCreditPerson {
+  id         String  @id @default(cuid())
+  importId   String
+  name       String
+  amount     Decimal @db.Decimal(12, 2)
+  paidAmount Decimal @default(0) @db.Decimal(12, 2)
+
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+}
+
+model AppSettings {
+  id              String   @id @default("singleton")
+  warehouseLocked Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+}
+
+model ImportCost {
+  id       String  @id @default(cuid())
+  importId String
+  name     String
+  amount   Decimal @db.Decimal(12, 2)
+
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+}
+
+model ImportProduct {
+  id          String   @id @default(cuid())
+  importId    String
+  name        String
+  sku         String?
+  description String?
+  unitCost    Decimal  @db.Decimal(12, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  import  Import   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  cartons Carton[]
+}
+
+model Carton {
+  id                    String   @id @default(cuid())
+  productId             String
+  cartonNumber          String
+  itemsPerCarton        Int
+  totalCartons          Int      @default(1)
+  remainingCartons      Int
+  remainingItems        Int
+  location              Location @default(WAREHOUSE)
+  shopId                String?
+  warehouseLeavingPrice Decimal? @db.Decimal(12, 2)
+  retailUnitPrice       Decimal? @db.Decimal(12, 2)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  product   ImportProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  shop      Shop?         @relation(fields: [shopId], references: [id], onDelete: SetNull)
+  saleItems SaleItem[]
+
+  @@unique([productId, cartonNumber])
+}
+
+model Sale {
+  id              String        @id @default(cuid())
+  saleNumber      String        @unique
+  type            SaleType
+  clientId        String?
+  shopId          String?
+  totalAmount     Decimal       @db.Decimal(12, 2)
+  paidAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  paymentStatus   PaymentStatus @default(CREDIT)
+  notes           String?
+  soldById        String?
+  retailSoldById  String?
+  saleDate        DateTime      @default(now())
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  client         Client? @relation(fields: [clientId], references: [id])
+  shop           Shop?   @relation(fields: [shopId], references: [id])
+  soldBy         User?   @relation("WholesaleSales", fields: [soldById], references: [id])
+  retailSoldBy   User?   @relation("RetailSales", fields: [retailSoldById], references: [id])
+  items          SaleItem[]
+  payments       Payment[]
+  ledgerEntries  SalespersonLedger[]
+}
+
+model SaleItem {
+  id           String  @id @default(cuid())
+  saleId       String
+  cartonId     String
+  cartonsSold  Int     @default(0)
+  itemsSold    Int     @default(0)
+  unitPrice    Decimal @db.Decimal(12, 2)
+  totalPrice   Decimal @db.Decimal(12, 2)
+
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  carton Carton @relation(fields: [cartonId], references: [id])
+}
+
+model Payment {
+  id            String         @id @default(cuid())
+  saleId        String?
+  amount        Decimal        @db.Decimal(12, 2)
+  paymentMethod PaymentMethod?
+  bankAccountId String?
+  paymentDate   DateTime       @default(now())
+  notes         String?
+  collectedById String?
+  createdAt     DateTime       @default(now())
+
+  sale        Sale?        @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  ledgerEntry SalespersonLedger?
+}
+
+model BankAccount {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments      Payment[]
+  expenses      Expense[]
+  transfersOut  BankTransfer[] @relation("TransferFrom")
+  transfersIn   BankTransfer[] @relation("TransferTo")
+}
+
+model BankTransfer {
+  id                String   @id @default(cuid())
+  fromBankAccountId String
+  toBankAccountId   String
+  amount            Decimal  @db.Decimal(12, 2)
+  transferDate      DateTime @default(now())
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  fromBank BankAccount @relation("TransferFrom", fields: [fromBankAccountId], references: [id])
+  toBank   BankAccount @relation("TransferTo", fields: [toBankAccountId], references: [id])
+}
+
+model Expense {
+  id            String          @id @default(cuid())
+  category      ExpenseCategory
+  description   String
+  amount        Decimal         @db.Decimal(12, 2)
+  expenseDate   DateTime        @default(now())
+  paidById      String?
+  bankAccountId String?
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  paidBy        User?               @relation("ExpensePaidBy", fields: [paidById], references: [id])
+  bankAccount   BankAccount?        @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  ledgerEntry   SalespersonLedger?
+}
+
+model SalespersonLedger {
+  id            String     @id @default(cuid())
+  userId        String
+  type          LedgerType
+  amount        Decimal    @db.Decimal(12, 2)
+  description   String
+  saleId        String?
+  paymentId     String?    @unique
+  expenseId     String?    @unique
+  entryDate     DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+
+  user    User     @relation(fields: [userId], references: [id])
+  sale    Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  expense Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+}
