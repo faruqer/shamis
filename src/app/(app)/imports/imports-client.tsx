@@ -19,6 +19,8 @@ import {
   getImportCreditPaidAmount,
   getImportTotalValue,
   getImportsSummary,
+  getProductLandedValue,
+  getProductFinalUnitCost,
 } from "@/lib/import-utils";
 import { Role } from "@prisma/client";
 
@@ -38,6 +40,8 @@ interface ImportRecord {
     id: string;
     name: string;
     unitCost: string;
+    productCustomCost?: string;
+    taxSeaFreight?: string;
     cartons: {
       totalCartons: number;
       itemsPerCarton: number;
@@ -75,6 +79,7 @@ function SummaryStat({
 }
 
 export function ImportsPageClient({ user }: { user: { name: string; role: Role; email: string } }) {
+  const isAdmin = user.role === Role.ADMIN;
   const [imports, setImports] = useState<ImportRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -130,13 +135,17 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
     <DashboardLayout
       user={user}
       title="Imports"
-      description="Manage China import batches and products"
+      description={
+        isAdmin
+          ? "Manage China import batches and products"
+          : "Record import batches — costs and credit are managed by the owner"
+      }
       action={
-        user.role === Role.ADMIN ? (
-          <Link href="/imports/new">
-            <Button><Plus className="h-4 w-4" /> New Import</Button>
-          </Link>
-        ) : undefined
+        <Link href="/imports/new">
+          <Button>
+            <Plus className="h-4 w-4" /> New Import
+          </Button>
+        </Link>
       }
     >
       {deleteError && (
@@ -158,26 +167,37 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
           title="No imports yet"
           description="Start by adding your first import batch from China"
           action={
-            user.role === Role.ADMIN ? (
-              <Link href="/imports/new"><Button><Plus className="h-4 w-4" /> Add Import</Button></Link>
-            ) : undefined
+            <Link href="/imports/new">
+              <Button>
+                <Plus className="h-4 w-4" /> Add Import
+              </Button>
+            </Link>
           }
         />
       ) : (
         <>
-          <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div
+            className={cn(
+              "mb-5 grid gap-2",
+              isAdmin ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5" : "grid-cols-2 sm:grid-cols-3"
+            )}
+          >
             <SummaryStat label="Imports" value={String(summary.importCount)} hint="Batches" />
-            <SummaryStat
-              label="Total value"
-              value={formatCurrency(summary.totalValue)}
-              hint="All batches"
-            />
-            <SummaryStat
-              label="Credit due"
-              value={formatCurrency(summary.totalCredit)}
-              hint="Outstanding"
-              highlight={summary.totalCredit > 0}
-            />
+            {isAdmin && (
+              <>
+                <SummaryStat
+                  label="Total value"
+                  value={formatCurrency(summary.totalValue)}
+                  hint="All batches"
+                />
+                <SummaryStat
+                  label="Credit due"
+                  value={formatCurrency(summary.totalCredit)}
+                  hint="Outstanding"
+                  highlight={summary.totalCredit > 0}
+                />
+              </>
+            )}
             <SummaryStat
               label="Products"
               value={String(summary.totalProducts)}
@@ -211,13 +231,13 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                         <CardTitle className="flex items-center gap-2 flex-wrap">
                           Batch {imp.batchNumber}
                           <Badge variant="primary">{imp.products?.length ?? 0} products</Badge>
-                          {imp.creditPaid && creditAmount > 0 && (
+                          {isAdmin && imp.creditPaid && creditAmount > 0 && (
                             <Badge variant="default" className="gap-1">
                               <CheckCircle2 className="h-3 w-3" />
                               Credit paid
                             </Badge>
                           )}
-                          {!imp.creditPaid && creditOutstanding > 0 && (
+                          {isAdmin && !imp.creditPaid && creditOutstanding > 0 && (
                             <Badge variant="warning">
                               {creditPaidAmount > 0 ? "Partial credit" : "On credit"}
                             </Badge>
@@ -228,17 +248,19 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                         </p>
                       </div>
                       <div className="flex items-start gap-3">
-                        <div className="text-right">
-                          <p className="text-xl font-bold text-primary">{formatCurrency(totalValue)}</p>
-                          <p className="text-xs text-muted-foreground">Total value</p>
-                        </div>
-                        {user.role === Role.ADMIN && (
-                          <div className="flex gap-1">
-                            <Link href={`/imports/${imp.id}/edit`}>
-                              <Button variant="outline" size="sm" aria-label="Edit import">
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </Link>
+                        {isAdmin && (
+                          <div className="text-right">
+                            <p className="text-xl font-bold text-primary">{formatCurrency(totalValue)}</p>
+                            <p className="text-xs text-muted-foreground">Total value</p>
+                          </div>
+                        )}
+                        <div className="flex gap-1">
+                          <Link href={`/imports/${imp.id}/edit`}>
+                            <Button variant="outline" size="sm" aria-label="Edit import">
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </Link>
+                          {isAdmin && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -249,69 +271,71 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => setCostsModalImport(imp)}
-                        >
-                          <Receipt className="h-3.5 w-3.5" />
-                          Costs
-                          {costsTotal > 0 && (
-                            <span className="font-semibold text-primary">{formatCurrency(costsTotal)}</span>
-                          )}
-                        </Button>
+                      {isAdmin && (
+                        <div className="mb-4 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => setCostsModalImport(imp)}
+                          >
+                            <Receipt className="h-3.5 w-3.5" />
+                            Costs
+                            {costsTotal > 0 && (
+                              <span className="font-semibold text-primary">{formatCurrency(costsTotal)}</span>
+                            )}
+                          </Button>
 
-                        {creditAmount > 0 && (
-                          <>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              onClick={() => setCreditDetailsImport(imp)}
-                            >
-                              <CreditCard className="h-3.5 w-3.5" />
-                              Credit
-                              <span
-                                className={cn(
-                                  "font-semibold",
-                                  imp.creditPaid ? "text-primary" : "text-warning"
-                                )}
-                              >
-                                {imp.creditPaid
-                                  ? formatCurrency(creditAmount)
-                                  : formatCurrency(creditOutstanding)}
-                              </span>
-                            </Button>
-
-                            {!imp.creditPaid && creditOutstanding > 0 && user.role === Role.ADMIN && (
+                          {creditAmount > 0 && (
+                            <>
                               <Button
                                 type="button"
+                                variant="outline"
                                 size="sm"
                                 className="gap-2"
-                                onClick={() => setPayCreditImport(imp)}
+                                onClick={() => setCreditDetailsImport(imp)}
                               >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                Pay credit
+                                <CreditCard className="h-3.5 w-3.5" />
+                                Credit
+                                <span
+                                  className={cn(
+                                    "font-semibold",
+                                    imp.creditPaid ? "text-primary" : "text-warning"
+                                  )}
+                                >
+                                  {imp.creditPaid
+                                    ? formatCurrency(creditAmount)
+                                    : formatCurrency(creditOutstanding)}
+                                </span>
                               </Button>
-                            )}
-                          </>
-                        )}
-                      </div>
+
+                              {!imp.creditPaid && creditOutstanding > 0 && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="gap-2"
+                                  onClick={() => setPayCreditImport(imp)}
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Pay credit
+                                </Button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       <div>
-                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           Products · {(imp.products ?? []).length}
                         </p>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
                           {(imp.products ?? []).map((product) => {
                             const carton = product.cartons[0];
                             const remainingCartons = product.cartons.reduce(
@@ -321,23 +345,48 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                             const totalCartons = carton?.totalCartons ?? 0;
                             const itemsPerCarton = carton?.itemsPerCarton ?? 0;
                             const totalItems = totalCartons * itemsPerCarton;
-                            const productValue = parseFloat(product.unitCost) * totalItems;
+                            const productValue = getProductLandedValue({
+                              unitCost: product.unitCost || 0,
+                              productCustomCost: product.productCustomCost || 0,
+                              taxSeaFreight: product.taxSeaFreight || 0,
+                              cartons: product.cartons,
+                            });
+                            const finalUnitCost = getProductFinalUnitCost({
+                              unitCost: product.unitCost || 0,
+                              productCustomCost: product.productCustomCost || 0,
+                              taxSeaFreight: product.taxSeaFreight || 0,
+                              cartons: product.cartons,
+                            });
 
                             return (
                               <div
                                 key={product.id}
-                                className="min-w-0 rounded-xl border border-border bg-gradient-to-br from-muted/50 to-muted/20 px-3 py-2.5"
+                                className="min-w-0 rounded border border-border/70 bg-muted/20 px-2 py-1.5"
                               >
-                                <p className="truncate text-sm font-semibold leading-snug">{product.name}</p>
-                                <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
-                                  {formatCurrency(product.unitCost)}/unit
+                                <p className="truncate text-[11px] font-semibold leading-tight">
+                                  {product.name}
                                 </p>
-                                <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
-                                  {remainingCartons}/{totalCartons} ctns · {totalItems} items
+                                <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
+                                  {formatCurrency(product.unitCost || 0)}/u
+                                  {totalItems > 0 && (
+                                    <> · Final {formatCurrency(finalUnitCost)}/u</>
+                                  )}
+                                  {" · "}
+                                  {remainingCartons}/{totalCartons} ct
                                 </p>
-                                <p className="mt-1.5 text-sm font-bold tabular-nums text-primary">
+                                <p className="mt-0.5 text-[11px] font-bold leading-tight text-primary tabular-nums">
                                   {formatCurrency(productValue)}
                                 </p>
+                                {isAdmin && (
+                                  <>
+                                    <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
+                                      Custom: {formatCurrency(product.productCustomCost || 0)}
+                                    </p>
+                                    <p className="truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
+                                      Tax & SF: {formatCurrency(product.taxSeaFreight || 0)}
+                                    </p>
+                                  </>
+                                )}
                               </div>
                             );
                           })}

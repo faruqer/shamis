@@ -1,6 +1,6 @@
 # Stock & Money Management System
 
-A professional full-stack inventory and financial management platform built with **Next.js 15**, **PostgreSQL**, and **Prisma**. Designed for businesses importing goods from China and selling through wholesale and retail channels.
+A professional full-stack inventory and financial management platform built with **Next.js 15**, **SQLite**, and **Prisma**. Designed for businesses importing goods from China and selling through wholesale and retail channels.
 
 ## Features
 
@@ -24,7 +24,7 @@ A professional full-stack inventory and financial management platform built with
 ## Tech Stack
 
 - **Frontend/Backend**: Next.js 15 (App Router)
-- **Database**: PostgreSQL
+- **Database**: SQLite
 - **ORM**: Prisma
 - **Auth**: JWT sessions (httpOnly cookies)
 - **UI**: Tailwind CSS v4, Framer Motion, Lucide icons
@@ -34,7 +34,6 @@ A professional full-stack inventory and financial management platform built with
 
 ### Prerequisites
 - Node.js 18+
-- PostgreSQL running locally or remotely
 
 ### Setup
 
@@ -47,9 +46,9 @@ A professional full-stack inventory and financial management platform built with
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` with your PostgreSQL connection:
+   Edit `.env` if needed (defaults work out of the box):
    ```
-   DATABASE_URL="postgresql://postgres:password@localhost:5432/stock_money?schema=public"
+   DATABASE_URL="file:./dev.db"
    JWT_SECRET="your-secret-key-here"
    ```
 

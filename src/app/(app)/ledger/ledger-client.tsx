@@ -11,7 +11,6 @@ import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition"
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
 import { Role } from "@prisma/client";
-import { BanksPanel } from "@/components/banks/banks-panel";
 
 interface LedgerEntry {
   id: string;
@@ -47,10 +46,8 @@ export function LedgerClient({ user }: { user: { name: string; role: Role; email
     <DashboardLayout
       user={user}
       title="Balance"
-      description={`Bank accounts, ${OWNER_NAME} credit held by shops, and salesperson ledger`}
+      description={`${OWNER_NAME} credit held by shops and salesperson ledger`}
     >
-      {user.role === Role.ADMIN && <BanksPanel user={user} embedded className="mb-8" />}
-
       {user.role === Role.ADMIN && data?.salespersonBalances && data.salespersonBalances.length > 0 && (
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           {data.salespersonBalances.map((sp, index) => (

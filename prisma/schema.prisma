@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -51,6 +51,11 @@ enum LedgerType {
   HANDOVER
 }
 
+enum HawalaStatus {
+  PENDING
+  CONFIRMED
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -67,7 +72,10 @@ model User {
   retailSales        Sale[]               @relation("RetailSales")
   ledgerEntries      SalespersonLedger[]
   expensesPaid       Expense[]            @relation("ExpensePaidBy")
-  createdImports Import[] @relation("ImportCreatedBy")
+  createdImports     Import[]             @relation("ImportCreatedBy")
+  hawalaReceivers    HawalaReceiver[]     @relation("HawalaReceivers")
+  hawalaTransfers    HawalaTransfer[]     @relation("HawalaTransfersSent")
+  hawalaConfirmations HawalaTransfer[]    @relation("HawalaConfirmations")
 }
 
 model Shop {
@@ -102,9 +110,9 @@ model Import {
   id           String   @id @default(cuid())
   batchNumber  String   @unique
   importDate   DateTime @default(now())
-  customCost   Decimal  @default(0) @db.Decimal(12, 2)
-  creditAmount     Decimal  @default(0) @db.Decimal(12, 2)
-  creditPaidAmount Decimal  @default(0) @db.Decimal(12, 2)
+  customCost       Decimal  @default(0)
+  creditAmount     Decimal  @default(0)
+  creditPaidAmount Decimal  @default(0)
   creditPaid       Boolean  @default(false)
   notes        String?
   createdById  String
@@ -121,9 +129,8 @@ model ImportCreditPerson {
   id         String  @id @default(cuid())
   importId   String
   name       String
-  amount     Decimal @db.Decimal(12, 2)
-  paidAmount Decimal @default(0) @db.Decimal(12, 2)
-
+  amount     Decimal
+  paidAmount Decimal @default(0)
   import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
 
   @@index([importId])
@@ -139,22 +146,23 @@ model ImportCost {
   id       String  @id @default(cuid())
   importId String
   name     String
-  amount   Decimal @db.Decimal(12, 2)
-
+  amount   Decimal
   import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
 
   @@index([importId])
 }
 
 model ImportProduct {
-  id          String   @id @default(cuid())
-  importId    String
-  name        String
-  sku         String?
-  description String?
-  unitCost    Decimal  @db.Decimal(12, 2)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  importId           String
+  name               String
+  sku                String?
+  description        String?
+  unitCost          Decimal
+  productCustomCost Decimal  @default(0)
+  taxSeaFreight     Decimal  @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   import  Import   @relation(fields: [importId], references: [id], onDelete: Cascade)
   cartons Carton[]
@@ -170,8 +178,8 @@ model Carton {
   remainingItems        Int
   location              Location @default(WAREHOUSE)
   shopId                String?
-  warehouseLeavingPrice Decimal? @db.Decimal(12, 2)
-  retailUnitPrice       Decimal? @db.Decimal(12, 2)
+  warehouseLeavingPrice Decimal?
+  retailUnitPrice       Decimal?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -188,9 +196,9 @@ model Sale {
   type            SaleType
   clientId        String?
   shopId          String?
-  totalAmount     Decimal       @db.Decimal(12, 2)
-  paidAmount      Decimal       @default(0) @db.Decimal(12, 2)
-  paymentStatus   PaymentStatus @default(CREDIT)
+  totalAmount   Decimal
+  paidAmount    Decimal       @default(0)
+  paymentStatus PaymentStatus @default(CREDIT)
   notes           String?
   soldById        String?
   retailSoldById  String?
@@ -213,9 +221,8 @@ model SaleItem {
   cartonId     String
   cartonsSold  Int     @default(0)
   itemsSold    Int     @default(0)
-  unitPrice    Decimal @db.Decimal(12, 2)
-  totalPrice   Decimal @db.Decimal(12, 2)
-
+  unitPrice  Decimal
+  totalPrice Decimal
   sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
   carton Carton @relation(fields: [cartonId], references: [id])
 }
@@ -223,7 +230,7 @@ model SaleItem {
 model Payment {
   id            String         @id @default(cuid())
   saleId        String?
-  amount        Decimal        @db.Decimal(12, 2)
+  amount        Decimal
   paymentMethod PaymentMethod?
   bankAccountId String?
   paymentDate   DateTime       @default(now())
@@ -253,8 +260,8 @@ model BankTransfer {
   id                String   @id @default(cuid())
   fromBankAccountId String
   toBankAccountId   String
-  amount            Decimal  @db.Decimal(12, 2)
-  transferDate      DateTime @default(now())
+  amount       Decimal
+  transferDate DateTime @default(now())
   notes             String?
   createdAt         DateTime @default(now())
 
@@ -266,8 +273,8 @@ model Expense {
   id            String          @id @default(cuid())
   category      ExpenseCategory
   description   String
-  amount        Decimal         @db.Decimal(12, 2)
-  expenseDate   DateTime        @default(now())
+  amount      Decimal
+  expenseDate DateTime @default(now())
   paidById      String?
   bankAccountId String?
   notes         String?
@@ -283,8 +290,8 @@ model SalespersonLedger {
   id            String     @id @default(cuid())
   userId        String
   type          LedgerType
-  amount        Decimal    @db.Decimal(12, 2)
-  description   String
+  amount      Decimal
+  description String
   saleId        String?
   paymentId     String?    @unique
   expenseId     String?    @unique
@@ -295,4 +302,41 @@ model SalespersonLedger {
   sale    Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
   payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   expense Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+}
+
+model HawalaReceiver {
+  id            String   @id @default(cuid())
+  salespersonId String
+  name          String
+  phone         String?
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  salesperson User             @relation("HawalaReceivers", fields: [salespersonId], references: [id], onDelete: Cascade)
+  transfers   HawalaTransfer[]
+
+  @@index([salespersonId])
+}
+
+model HawalaTransfer {
+  id            String       @id @default(cuid())
+  salespersonId String
+  receiverId    String
+  amount       Decimal
+  notes        String?
+  transferDate  DateTime     @default(now())
+  status        HawalaStatus @default(PENDING)
+  confirmedAt   DateTime?
+  confirmedById String?
+  createdAt     DateTime     @default(now())
+
+  salesperson User           @relation("HawalaTransfersSent", fields: [salespersonId], references: [id])
+  receiver    HawalaReceiver @relation(fields: [receiverId], references: [id])
+  confirmedBy User?          @relation("HawalaConfirmations", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  @@index([salespersonId])
+  @@index([receiverId])
+  @@index([status])
 }

@@ -4,8 +4,20 @@ import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, errorResponse, handleApiError } from "@/lib/api-utils";
 import { Role } from "@prisma/client";
+import { sanitizeImportForRole } from "@/lib/import-sanitize";
 
-const productSchema = z.object({
+const adminProductSchema = z.object({
+  name: z.string().min(1),
+  unitCost: z.number().positive(),
+  totalCartons: z.number().int().positive(),
+  itemsPerCarton: z.number().int().positive(),
+  productCustomCost: z.number().min(0).optional(),
+  taxSeaFreight: z.number().min(0).optional(),
+});
+
+const productSchema = adminProductSchema;
+
+const salespersonProductSchema = z.object({
   name: z.string().min(1),
   unitCost: z.number().positive(),
   totalCartons: z.number().int().positive(),
@@ -31,6 +43,13 @@ const importSchema = z.object({
   creditPersons: z.array(creditPersonSchema).optional(),
   notes: z.string().optional(),
   products: z.array(productSchema).min(1),
+});
+
+const salespersonImportSchema = z.object({
+  batchNumber: z.string().min(1),
+  importDate: z.string().optional(),
+  notes: z.string().optional(),
+  products: z.array(salespersonProductSchema).min(1),
 });
 
 function getCreditTotal(creditPersons: { amount: number }[] | undefined) {
@@ -98,11 +117,11 @@ async function importHasSales(importId: string) {
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
-    await requireSession();
+    const session = await requireSession();
     const { id } = await context.params;
     const importRecord = await getImportWithRelations(id);
     if (!importRecord) return errorResponse("Import not found", 404);
-    return jsonResponse(importRecord);
+    return jsonResponse(sanitizeImportForRole(importRecord, session.role));
   } catch (error) {
     return handleApiError(error);
   }
@@ -110,26 +129,71 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
-    await requireSession(Role.ADMIN);
+    const session = await requireSession();
     const { id } = await context.params;
     const body = await request.json();
-    const data = importSchema.parse(body);
 
-    const existing = await prisma.import.findUnique({ where: { id } });
-    if (!existing) return errorResponse("Import not found", 404);
-
-    const credit = resolveCreditFields(data, existing);
-    validateCreditPersons(data.creditPersons);
-
-    const duplicate = await prisma.import.findFirst({
-      where: { batchNumber: data.batchNumber, NOT: { id } },
+    const existing = await prisma.import.findUnique({
+      where: { id },
+      include: { products: true },
     });
-    if (duplicate) throw new Error("Batch number already exists");
+    if (!existing) return errorResponse("Import not found", 404);
 
     const hasSales = await importHasSales(id);
     if (hasSales) {
       throw new Error("Cannot edit import that has linked sales. Remove sales first.");
     }
+
+    const duplicate = await prisma.import.findFirst({
+      where: { batchNumber: body.batchNumber, NOT: { id } },
+    });
+    if (duplicate) throw new Error("Batch number already exists");
+
+    if (session.role !== Role.ADMIN) {
+      const data = salespersonImportSchema.parse(body);
+
+      const importRecord = await prisma.$transaction(async (tx) => {
+        await tx.importProduct.deleteMany({ where: { importId: id } });
+
+        return tx.import.update({
+          where: { id },
+          data: {
+            batchNumber: data.batchNumber,
+            importDate: data.importDate ? new Date(data.importDate) : existing.importDate,
+            notes: data.notes ?? existing.notes,
+            products: {
+              create: data.products.map((product, index) => ({
+                name: product.name,
+                unitCost: product.unitCost,
+                cartons: {
+                  create: {
+                    cartonNumber: String(index + 1),
+                    itemsPerCarton: product.itemsPerCarton,
+                    totalCartons: product.totalCartons,
+                    remainingCartons: product.totalCartons,
+                    remainingItems: product.totalCartons * product.itemsPerCarton,
+                    location: "WAREHOUSE",
+                  },
+                },
+              })),
+            },
+          },
+          include: {
+            createdBy: { select: { name: true } },
+            costs: true,
+            creditPersons: true,
+            products: { include: { cartons: true } },
+          },
+        });
+      });
+
+      return jsonResponse(sanitizeImportForRole(importRecord, session.role));
+    }
+
+    const data = importSchema.parse(body);
+
+    const credit = resolveCreditFields(data, existing);
+    validateCreditPersons(data.creditPersons);
 
     const importRecord = await prisma.$transaction(async (tx) => {
       await tx.importProduct.deleteMany({ where: { importId: id } });
@@ -161,6 +225,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
             create: data.products.map((product, index) => ({
               name: product.name,
               unitCost: product.unitCost,
+              productCustomCost: product.productCustomCost ?? 0,
+              taxSeaFreight: product.taxSeaFreight ?? 0,
               cartons: {
                 create: {
                   cartonNumber: String(index + 1),
@@ -183,7 +249,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       });
     });
 
-    return jsonResponse(importRecord);
+    return jsonResponse(sanitizeImportForRole(importRecord, session.role));
   } catch (error) {
     return handleApiError(error);
   }

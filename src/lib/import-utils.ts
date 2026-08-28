@@ -5,8 +5,23 @@ export interface ImportCartonLike {
   remainingItems?: number;
 }
 
+export function getEqualCustomCostPerProduct(costsTotal: number, productCount: number) {
+  if (productCount <= 0) return 0;
+  return costsTotal / productCount;
+}
+
+export function applyAverageCustomCostToProducts<
+  T extends { productCustomCost?: number },
+>(items: T[], costsTotal: number): T[] {
+  const perProduct = getEqualCustomCostPerProduct(costsTotal, items.length);
+  const rounded = Math.round(perProduct * 100) / 100;
+  return items.map((product) => ({ ...product, productCustomCost: rounded }));
+}
+
 export interface ImportProductLike {
   unitCost: number | string;
+  productCustomCost?: number | string | null;
+  taxSeaFreight?: number | string | null;
   cartons: ImportCartonLike[];
 }
 
@@ -35,12 +50,25 @@ export function getProductValue(unitCost: number | string, cartons: ImportCarton
   return cost * getProductTotalItems(cartons);
 }
 
+export function getProductFinalUnitCost(product: ImportProductLike) {
+  const unitCost = parseAmount(product.unitCost);
+  const totalItems = getProductTotalItems(product.cartons ?? []);
+  if (totalItems <= 0) return unitCost;
+
+  const custom = parseAmount(product.productCustomCost ?? 0);
+  const tax = parseAmount(product.taxSeaFreight ?? 0);
+  return unitCost + custom / totalItems + tax / totalItems;
+}
+
+export function getProductLandedValue(product: ImportProductLike) {
+  const totalItems = getProductTotalItems(product.cartons ?? []);
+  if (totalItems <= 0) return 0;
+  return getProductFinalUnitCost(product) * totalItems;
+}
+
 export function getImportProductsValue(importRecord: ImportLike) {
   const products = importRecord.products ?? [];
-  return products.reduce(
-    (sum, product) => sum + getProductValue(product.unitCost, product.cartons ?? []),
-    0
-  );
+  return products.reduce((sum, product) => sum + getProductLandedValue(product), 0);
 }
 
 function parseAmount(value: number | string) {
@@ -62,7 +90,14 @@ export function getImportCustomCost(importRecord: ImportLike) {
 }
 
 export function getImportTotalValue(importRecord: ImportLike) {
-  return getImportProductsValue(importRecord) + getImportCustomCost(importRecord);
+  const productsTotal = getImportProductsValue(importRecord);
+  const allocatedCustom = (importRecord.products ?? []).reduce(
+    (sum, product) => sum + parseAmount(product.productCustomCost ?? 0),
+    0
+  );
+  const importCosts = getImportCostsTotal(importRecord);
+  const unallocatedCosts = Math.max(0, importCosts - allocatedCustom);
+  return productsTotal + unallocatedCosts;
 }
 
 export function getImportCreditPaidAmount(importRecord: ImportLike) {

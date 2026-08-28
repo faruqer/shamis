@@ -2,11 +2,12 @@ import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { decimalToNumber } from "@/lib/utils";
-import { getImportCostsTotal } from "@/lib/import-utils";
-import { getSaleProfit } from "@/lib/sale-utils";
+import { getImportTotalValue } from "@/lib/import-utils";
+import { getRetailSaleItemCost, getSaleCost, getSaleItemCost, getSaleProfit } from "@/lib/sale-utils";
 import { Role } from "@prisma/client";
 
 function getDays(period: string) {
+  if (period === "today") return 1;
   if (period === "7d") return 7;
   if (period === "90d") return 90;
   return 30;
@@ -74,9 +75,15 @@ function resolveReportRange(
 
   const days = getDays(period);
   const end = endOfDay(new Date());
-  const start = new Date(end);
-  start.setDate(start.getDate() - (days - 1));
-  start.setHours(0, 0, 0, 0);
+  const start =
+    period === "today"
+      ? startOfDay(new Date())
+      : (() => {
+          const s = new Date(end);
+          s.setDate(s.getDate() - (days - 1));
+          s.setHours(0, 0, 0, 0);
+          return s;
+        })();
 
   const dayBuckets = Array.from({ length: days }, (_, index) => {
     const bucketDate = new Date(start);
@@ -94,6 +101,7 @@ function resolveReportRange(
 function shouldIncludeSale(saleType: string, channel: string) {
   if (channel === "wholesale") return saleType === "WHOLESALE";
   if (channel === "retail") return saleType === "RETAIL";
+  if (channel === "to_shop") return saleType === "SHOP_TRANSFER";
   return true;
 }
 
@@ -143,6 +151,41 @@ function formatDayLabel(date: Date) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function formatDayShort(date: Date) {
+  return date.toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
+}
+
+function getSaleItemCostForType(
+  item: {
+    cartonsSold: number;
+    itemsSold: number;
+    carton: {
+      itemsPerCarton: number;
+      warehouseLeavingPrice: { toString(): string } | null;
+      product: { unitCost: { toString(): string } };
+    };
+  },
+  saleType: string
+) {
+  const profitItems = toProfitItems([item as Parameters<typeof toProfitItems>[0][0]]);
+  const first = profitItems[0];
+  if (saleType === "RETAIL") {
+    return getRetailSaleItemCost(
+      first.cartonsSold,
+      first.itemsSold,
+      first.carton.itemsPerCarton,
+      first.carton.warehouseLeavingPrice,
+      first.carton.product.unitCost
+    );
+  }
+  return getSaleItemCost(
+    first.cartonsSold,
+    first.itemsSold,
+    first.carton.itemsPerCarton,
+    first.carton.product.unitCost
+  );
+}
+
 function toProfitItems(
   items: {
     cartonsSold: number;
@@ -183,6 +226,7 @@ export async function GET(request: Request) {
     const shopId = searchParams.get("shopId") || null;
     const salespersonId = searchParams.get("salespersonId") || null;
     const bankAccountId = searchParams.get("bankAccountId") || null;
+    const depositBankId = searchParams.get("depositBankId") || null;
 
     const filters: ReportFilters = {
       channel,
@@ -207,6 +251,7 @@ export async function GET(request: Request) {
         transfersOut,
         transfersIn,
         periodTransfers,
+        periodPayments,
       ] = await Promise.all([
         prisma.sale.findMany({
           where: { saleDate: { gte: start, lte: end } },
@@ -267,6 +312,25 @@ export async function GET(request: Request) {
           },
           orderBy: { transferDate: "desc" },
         }),
+        prisma.payment.findMany({
+          where: {
+            paymentDate: { gte: start, lte: end },
+            bankAccountId: { not: null },
+            ...(depositBankId ? { bankAccountId: depositBankId } : {}),
+          },
+          include: {
+            bankAccount: { select: { id: true, name: true } },
+            sale: {
+              select: {
+                type: true,
+                paymentStatus: true,
+                shopId: true,
+                soldById: true,
+                retailSoldById: true,
+              },
+            },
+          },
+        }),
       ]);
 
       const revenueByDay = new Map(dayBuckets.map((d) => [d.key, 0]));
@@ -278,8 +342,13 @@ export async function GET(request: Request) {
       let wholesaleRevenue = 0;
       let retailRevenue = 0;
       let transferValue = 0;
+      let wholesaleProfit = 0;
+      let retailProfit = 0;
+      let transferProfit = 0;
       let totalProfit = 0;
       let totalExpenses = 0;
+      let warehouseExpenses = 0;
+      let retailExpenses = 0;
       let filteredRevenue = 0;
       let totalCollected = 0;
       let totalOutstanding = 0;
@@ -287,7 +356,14 @@ export async function GET(request: Request) {
       let retailCount = 0;
       let transferCount = 0;
       const paymentBreakdown = { PAID: 0, PARTIAL: 0, CREDIT: 0 };
-      const productStats = new Map<string, { name: string; revenue: number; profit: number; itemsSold: number }>();
+      const productStats = new Map<
+        string,
+        { name: string; revenue: number; profit: number; cost: number; itemsSold: number }
+      >();
+      const importStats = new Map<
+        string,
+        { revenue: number; cost: number; profit: number; itemsSold: number }
+      >();
       const expenseByCategory = new Map<string, number>();
       const salesByShop = new Map<string, { name: string; revenue: number; count: number }>();
 
@@ -301,10 +377,11 @@ export async function GET(request: Request) {
         const key = formatDayKey(sale.saleDate);
         const revenue = decimalToNumber(sale.totalAmount);
         const paid = decimalToNumber(sale.paidAmount);
+        const profitItems = toProfitItems(sale.items);
         const profit =
           sale.type === "SHOP_TRANSFER"
-            ? 0
-            : getSaleProfit(decimalToNumber(sale.totalAmount), toProfitItems(sale.items), sale.type);
+            ? revenue - getSaleCost(profitItems)
+            : getSaleProfit(decimalToNumber(sale.totalAmount), profitItems, sale.type);
 
         revenueByDay.set(key, (revenueByDay.get(key) ?? 0) + revenue);
         profitByDay.set(key, (profitByDay.get(key) ?? 0) + profit);
@@ -316,10 +393,12 @@ export async function GET(request: Request) {
 
         if (sale.type === "WHOLESALE") {
           wholesaleRevenue += revenue;
+          wholesaleProfit += profit;
           wholesaleCount += 1;
         }
         if (sale.type === "RETAIL") {
           retailRevenue += revenue;
+          retailProfit += profit;
           retailCount += 1;
           if (sale.shop) {
             const shopStats = salesByShop.get(sale.shopId!) ?? {
@@ -334,6 +413,7 @@ export async function GET(request: Request) {
         }
         if (sale.type === "SHOP_TRANSFER") {
           transferValue += revenue;
+          transferProfit += profit;
           transferCount += 1;
         }
 
@@ -346,11 +426,34 @@ export async function GET(request: Request) {
             const name = item.carton.product.name;
             const itemRevenue = decimalToNumber(item.totalPrice);
             const itemProfit = getSaleProfit(itemRevenue, toProfitItems([item]), sale.type);
-            const existing = productStats.get(name) ?? { name, revenue: 0, profit: 0, itemsSold: 0 };
+            const itemCost = getSaleItemCostForType(item, sale.type);
+            const existing = productStats.get(name) ?? {
+              name,
+              revenue: 0,
+              profit: 0,
+              cost: 0,
+              itemsSold: 0,
+            };
             existing.revenue += itemRevenue;
             existing.profit += itemProfit;
+            existing.cost += itemCost;
             existing.itemsSold += item.itemsSold;
             productStats.set(name, existing);
+
+            const importId = item.carton.product.importId;
+            if (importId) {
+              const importRow = importStats.get(importId) ?? {
+                revenue: 0,
+                cost: 0,
+                profit: 0,
+                itemsSold: 0,
+              };
+              importRow.revenue += itemRevenue;
+              importRow.cost += itemCost;
+              importRow.profit += itemProfit;
+              importRow.itemsSold += item.itemsSold;
+              importStats.set(importId, importRow);
+            }
           }
         }
       }
@@ -360,6 +463,11 @@ export async function GET(request: Request) {
         const amount = decimalToNumber(expense.amount);
         expensesByDay.set(key, (expensesByDay.get(key) ?? 0) + amount);
         totalExpenses += amount;
+        if (expense.category === "SHOP") {
+          retailExpenses += amount;
+        } else if (expense.category === "WAREHOUSE") {
+          warehouseExpenses += amount;
+        }
         const cat = expense.description.trim() || expense.category;
         expenseByCategory.set(cat, (expenseByCategory.get(cat) ?? 0) + amount);
       }
@@ -385,8 +493,108 @@ export async function GET(request: Request) {
           name: p.name,
           revenue: p.revenue,
           profit: p.profit,
+          cost: p.cost,
           itemsSold: p.itemsSold,
         }));
+
+      const productProfits = [...productStats.values()]
+        .sort((a, b) => b.profit - a.profit)
+        .map((p) => ({
+          name: p.name,
+          revenue: p.revenue,
+          profit: p.profit,
+          cost: p.cost,
+          itemsSold: p.itemsSold,
+        }));
+
+      const importIds = [...importStats.keys()];
+      const importDetails =
+        importIds.length > 0
+          ? await prisma.import.findMany({
+              where: { id: { in: importIds } },
+              include: { costs: true, products: { include: { cartons: true } } },
+            })
+          : [];
+
+      const importProfits = importDetails
+        .map((imp) => {
+          const stats = importStats.get(imp.id)!;
+          const totalItems = imp.products.reduce(
+            (sum, product) =>
+              sum +
+              product.cartons.reduce(
+                (cartonSum, carton) => cartonSum + carton.totalCartons * carton.itemsPerCarton,
+                0
+              ),
+            0
+          );
+          const remainingItems = imp.products.reduce(
+            (sum, product) =>
+              sum +
+              product.cartons.reduce(
+                (cartonSum, carton) =>
+                  cartonSum + carton.remainingCartons * carton.itemsPerCarton + carton.remainingItems,
+                0
+              ),
+            0
+          );
+          const percentSold =
+            totalItems > 0 ? Math.round(((totalItems - remainingItems) / totalItems) * 100) : 0;
+          const importCost = getImportTotalValue({
+            customCost: imp.customCost.toString(),
+            costs: imp.costs?.map((c) => ({ name: c.name, amount: c.amount.toString() })),
+            products: imp.products.map((product) => ({
+              unitCost: product.unitCost.toString(),
+              productCustomCost: product.productCustomCost.toString(),
+              taxSeaFreight: product.taxSeaFreight.toString(),
+              cartons: product.cartons.map((carton) => ({
+                totalCartons: carton.totalCartons,
+                itemsPerCarton: carton.itemsPerCarton,
+              })),
+            })),
+          });
+
+          return {
+            id: imp.id,
+            batchNumber: imp.batchNumber,
+            notes: imp.notes,
+            importCost,
+            revenue: stats.revenue,
+            cost: stats.cost,
+            profit: stats.profit,
+            itemsSold: stats.itemsSold,
+            percentSold,
+          };
+        })
+        .sort((a, b) => b.profit - a.profit);
+
+      const filteredPayments = periodPayments.filter((payment) => {
+        if (!payment.sale) return true;
+        return passesSaleFilters(payment.sale, filters);
+      });
+
+      const depositsByBank = new Map<string, { id: string; name: string; amount: number }>();
+      for (const payment of filteredPayments) {
+        if (!payment.bankAccountId || !payment.bankAccount) continue;
+        const amount = decimalToNumber(payment.amount);
+        const existing = depositsByBank.get(payment.bankAccountId) ?? {
+          id: payment.bankAccountId,
+          name: payment.bankAccount.name,
+          amount: 0,
+        };
+        existing.amount += amount;
+        depositsByBank.set(payment.bankAccountId, existing);
+      }
+
+      const bankDeposits = [...depositsByBank.values()].sort((a, b) => b.amount - a.amount);
+      const totalBankDeposits = bankDeposits.reduce((sum, bank) => sum + bank.amount, 0);
+
+      const dailySalesProfit = dayBuckets.map((day) => ({
+        key: day.key,
+        label: formatDayShort(day.date),
+        sales: revenueByDay.get(day.key) ?? 0,
+        profit: profitByDay.get(day.key) ?? 0,
+      }));
 
       const totalsByBank = new Map(
         paymentTotals
@@ -436,13 +644,23 @@ export async function GET(request: Request) {
       );
 
       const importValue = imports.reduce((sum, imp) => {
-        const productValue = imp.products.reduce((pSum, product) => {
-          const cartons = product.cartons[0];
-          if (!cartons) return pSum;
-          return pSum + decimalToNumber(product.unitCost) * cartons.totalCartons * cartons.itemsPerCarton;
-        }, 0);
         const costs = imp.costs?.map((c) => ({ name: c.name, amount: c.amount.toString() }));
-        return sum + productValue + getImportCostsTotal({ products: [], costs, customCost: imp.customCost.toString() });
+        return (
+          sum +
+          getImportTotalValue({
+            customCost: imp.customCost.toString(),
+            costs,
+            products: imp.products.map((product) => ({
+              unitCost: product.unitCost.toString(),
+              productCustomCost: product.productCustomCost.toString(),
+              taxSeaFreight: product.taxSeaFreight.toString(),
+              cartons: product.cartons.map((carton) => ({
+                totalCartons: carton.totalCartons,
+                itemsPerCarton: carton.itemsPerCarton,
+              })),
+            })),
+          })
+        );
       }, 0);
 
       const rangeMs = end.getTime() - start.getTime();
@@ -455,7 +673,9 @@ export async function GET(request: Request) {
             ? { type: "WHOLESALE" as const }
             : channel === "retail"
               ? { type: "RETAIL" as const }
-              : {}),
+              : channel === "to_shop"
+                ? { type: "SHOP_TRANSFER" as const }
+                : {}),
         },
         _sum: { totalAmount: true },
       });
@@ -477,8 +697,14 @@ export async function GET(request: Request) {
           wholesaleRevenue,
           retailRevenue,
           transferValue,
+          wholesaleProfit,
+          retailProfit,
+          transferProfit,
+          wholesaleAndTransferProfit: wholesaleProfit + transferProfit,
           totalProfit,
           totalExpenses,
+          warehouseExpenses,
+          retailExpenses,
           netProfit: totalProfit - totalExpenses,
           ownerCreditTotal,
           importValue,
@@ -490,6 +716,7 @@ export async function GET(request: Request) {
           totalCollected,
           totalOutstanding,
           totalBankBalance,
+          totalBankDeposits,
           transfersTotal,
           avgSale: filteredSalesCount > 0 ? filteredRevenue / filteredSalesCount : 0,
           avgProfit: filteredSalesCount > 0 ? totalProfit / filteredSalesCount : 0,
@@ -504,6 +731,7 @@ export async function GET(request: Request) {
           shopId,
           salespersonId,
           bankAccountId,
+          depositBankId,
         },
         trends: {
           labels: dayBuckets.map((d) => d.label),
@@ -520,6 +748,15 @@ export async function GET(request: Request) {
           { label: "Credit", value: paymentBreakdown.CREDIT, color: "#b85c5c" },
         ],
         topProducts,
+        productProfits,
+        importProfits,
+        dailySalesProfit,
+        bankDeposits,
+        profitByChannel: [
+          { label: "Wholesale", value: wholesaleProfit, color: "#6b9080" },
+          { label: "To shop", value: transferProfit, color: "#c4a35a" },
+          { label: "Retail", value: retailProfit, color: "#5a8a6a" },
+        ],
         expenseBreakdown: [...expenseByCategory.entries()]
           .map(([label, value]) => ({ label, value }))
           .sort((a, b) => b.value - a.value),

@@ -14,6 +14,7 @@ import {
   UserCog,
   BarChart3,
   Landmark,
+  ArrowLeftRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
@@ -33,12 +34,13 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" /> },
-  { href: "/imports", label: "Imports", icon: <Package className="h-5 w-5" />, roles: [Role.ADMIN] },
+  { href: "/imports", label: "Imports", icon: <Package className="h-5 w-5" /> },
   { href: "/inventory", label: "Inventory", icon: <Store className="h-5 w-5" /> },
   { href: "/sales", label: "Sales", icon: <Receipt className="h-5 w-5" /> },
   { href: "/expenses", label: "Expenses", icon: <Receipt className="h-5 w-5" /> },
   { href: "/balance", label: "Balance", icon: <Wallet className="h-5 w-5" />, roles: [Role.ADMIN] },
   { href: "/banks", label: "Bank Accounts", icon: <Landmark className="h-5 w-5" />, roles: [Role.ADMIN] },
+  { href: "/hawala", label: "Hawala", icon: <ArrowLeftRight className="h-5 w-5" /> },
   { href: "/report", label: "Report", icon: <BarChart3 className="h-5 w-5" />, roles: [Role.ADMIN] },
   { href: "/clients", label: "Clients", icon: <Users className="h-5 w-5" />, roles: [Role.ADMIN] },
   { href: "/users", label: "Shops & Users", icon: <UserCog className="h-5 w-5" />, roles: [Role.ADMIN] },

@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { ProfitEyeToggle, PROFIT_MASK, useProfitReveal } from "@/components/ui/profit-reveal";
+import { ProfitEyeToggle, PROFIT_MASK, useProfitReveal, SensitiveProfitText } from "@/components/ui/profit-reveal";
 import { LoadingSpinner } from "@/components/layout/page-transition";
 import { LineChart } from "@/components/charts/line-chart";
 import { DonutChart } from "@/components/charts/donut-chart";
@@ -26,8 +26,8 @@ import {
 } from "@/lib/brand";
 import { Role } from "@prisma/client";
 
-type PeriodMode = "7d" | "30d" | "90d" | "day" | "range";
-type Channel = "all" | "wholesale" | "retail";
+type PeriodMode = "today" | "7d" | "30d" | "90d" | "day" | "range";
+type Channel = "all" | "wholesale" | "retail" | "to_shop";
 type SaleTypeFilter = "all" | "WHOLESALE" | "RETAIL" | "SHOP_TRANSFER";
 type PaymentStatusFilter = "all" | "PAID" | "PARTIAL" | "CREDIT";
 
@@ -50,7 +50,22 @@ interface ReportData {
   };
   paymentBreakdown: { label: string; value: number; color: string }[];
   saleTypeBreakdown?: { label: string; value: number; color: string }[];
-  topProducts?: { name: string; revenue: number; profit: number; itemsSold: number }[];
+  topProducts?: { name: string; revenue: number; profit: number; cost: number; itemsSold: number }[];
+  productProfits?: { name: string; revenue: number; profit: number; cost: number; itemsSold: number }[];
+  importProfits?: {
+    id: string;
+    batchNumber: string;
+    notes: string | null;
+    importCost: number;
+    revenue: number;
+    cost: number;
+    profit: number;
+    itemsSold: number;
+    percentSold: number;
+  }[];
+  dailySalesProfit?: { key: string; label: string; sales: number; profit: number }[];
+  bankDeposits?: { id: string; name: string; amount: number }[];
+  profitByChannel?: { label: string; value: number; color: string }[];
   expenseBreakdown?: { label: string; value: number }[];
   salesByShop?: { name: string; revenue: number; count: number }[];
   bankBalances?: { id: string; name: string; isActive: boolean; balance: number; paymentCount: number }[];
@@ -84,6 +99,7 @@ interface ReportData {
 }
 
 const PERIOD_OPTIONS: { key: PeriodMode; label: string }[] = [
+  { key: "today", label: "Today" },
   { key: "7d", label: "Last 7 days" },
   { key: "30d", label: "Last 30 days" },
   { key: "90d", label: "Last 90 days" },
@@ -91,9 +107,17 @@ const PERIOD_OPTIONS: { key: PeriodMode; label: string }[] = [
   { key: "range", label: "Custom range" },
 ];
 
+const CHANNEL_TOGGLE: { key: Channel; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "wholesale", label: "Wholesale" },
+  { key: "to_shop", label: "To shop" },
+  { key: "retail", label: "Retail" },
+];
+
 const CHANNEL_OPTIONS: { key: Channel; label: string }[] = [
   { key: "all", label: "All channels" },
   { key: "wholesale", label: "Wholesale" },
+  { key: "to_shop", label: "To shop" },
   { key: "retail", label: "Retail" },
 ];
 
@@ -166,7 +190,7 @@ export function ReportClient({
 }: {
   user: { name: string; role: Role; email: string; shopName?: string | null };
 }) {
-  const [periodMode, setPeriodMode] = useState<PeriodMode>("30d");
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("today");
   const [specificDate, setSpecificDate] = useState(todayIso);
   const [rangeFrom, setRangeFrom] = useState(daysAgoIso(29));
   const [rangeTo, setRangeTo] = useState(todayIso);
@@ -176,7 +200,9 @@ export function ReportClient({
   const [shopId, setShopId] = useState("");
   const [salespersonId, setSalespersonId] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  const [depositBankId, setDepositBankId] = useState("");
   const [tableSearch, setTableSearch] = useState("");
+  const [productSearch, setProductSearch] = useState("");
   const [filterOptions, setFilterOptions] = useState<{
     shops: FilterOption[];
     salespersons: FilterOption[];
@@ -197,6 +223,7 @@ export function ReportClient({
     if (shopId) params.set("shopId", shopId);
     if (salespersonId) params.set("salespersonId", salespersonId);
     if (bankAccountId) params.set("bankAccountId", bankAccountId);
+    if (depositBankId) params.set("depositBankId", depositBankId);
 
     if (periodMode === "day") {
       params.set("date", specificDate);
@@ -232,6 +259,7 @@ export function ReportClient({
     shopId,
     salespersonId,
     bankAccountId,
+    depositBankId,
   ]);
 
   useEffect(() => {
@@ -261,7 +289,9 @@ export function ReportClient({
     setShopId("");
     setSalespersonId("");
     setBankAccountId("");
+    setDepositBankId("");
     setTableSearch("");
+    setProductSearch("");
   };
 
   const hasActiveFilters =
@@ -270,7 +300,8 @@ export function ReportClient({
     paymentStatus !== "all" ||
     !!shopId ||
     !!salespersonId ||
-    !!bankAccountId;
+    !!bankAccountId ||
+    !!depositBankId;
 
   useEffect(() => {
     loadReport();
@@ -280,7 +311,19 @@ export function ReportClient({
   const trend = data?.summary.revenueTrend ?? 0;
   const trendPositive = trend >= 0;
   const channelLabel =
-    channel === "wholesale" ? "Wholesale" : channel === "retail" ? "Retail" : "";
+    channel === "wholesale"
+      ? "Wholesale"
+      : channel === "retail"
+        ? "Retail"
+        : channel === "to_shop"
+          ? "To shop"
+          : "";
+
+  const filteredProductProfits =
+    data?.productProfits?.filter((product) => {
+      if (!productSearch.trim()) return true;
+      return product.name.toLowerCase().includes(productSearch.toLowerCase());
+    }) ?? [];
 
   return (
     <DashboardLayout
@@ -295,6 +338,22 @@ export function ReportClient({
       }
     >
       <div className="mb-4 space-y-3">
+        {user.role === Role.ADMIN && (
+          <div className="flex flex-wrap gap-2">
+            {CHANNEL_TOGGLE.map((option) => (
+              <Button
+                key={option.key}
+                type="button"
+                size="sm"
+                variant={channel === option.key ? "primary" : "outline"}
+                onClick={() => setChannel(option.key)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        )}
+
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Period</Label>
@@ -425,6 +484,21 @@ export function ReportClient({
                 <Select
                   value={bankAccountId}
                   onChange={(e) => setBankAccountId(e.target.value)}
+                  className="w-40 h-9 text-sm"
+                >
+                  <option value="">All banks</option>
+                  {filterOptions.banks.map((bank) => (
+                    <option key={bank.id} value={bank.id}>
+                      {bank.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Deposit bank</Label>
+                <Select
+                  value={depositBankId}
+                  onChange={(e) => setDepositBankId(e.target.value)}
                   className="w-40 h-9 text-sm"
                 >
                   <option value="">All banks</option>
@@ -591,6 +665,130 @@ export function ReportClient({
             )}
           </div>
 
+          {isAdmin && (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+              {(channel === "retail" || channel === "all") && (
+                <>
+                  <div className="rounded-lg border border-border/70 bg-card px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Retail profit</p>
+                    <SensitiveProfitText
+                      value={formatCurrency(data.summary.retailProfit ?? data.summary.totalProfit ?? 0)}
+                      className="text-xl font-bold text-success"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-card px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Total sales</p>
+                    <p className="text-xl font-bold tabular-nums">
+                      {formatCurrency(data.summary.retailRevenue ?? data.summary.totalRevenue ?? 0)}
+                    </p>
+                  </div>
+                </>
+              )}
+              {(channel === "wholesale" || channel === "to_shop" || channel === "all") && (
+                <div className="rounded-lg border border-border/70 bg-card px-4 py-3 sm:col-span-2">
+                  <p className="text-xs text-muted-foreground">Wholesale &amp; to shop profit</p>
+                  <SensitiveProfitText
+                    value={formatCurrency(
+                      channel === "wholesale"
+                        ? (data.summary.wholesaleProfit ?? 0)
+                        : channel === "to_shop"
+                          ? (data.summary.transferProfit ?? 0)
+                          : (data.summary.wholesaleAndTransferProfit ?? 0)
+                    )}
+                    className="text-xl font-bold text-success"
+                  />
+                </div>
+              )}
+              <div className="rounded-lg border border-border/70 bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  {channel === "retail" ? "Retail expenses" : "Warehouse expenses"}
+                </p>
+                <p className="text-xl font-bold text-destructive tabular-nums">
+                  -{formatCurrency(
+                    channel === "retail"
+                      ? (data.summary.retailExpenses ?? 0)
+                      : (data.summary.warehouseExpenses ?? data.summary.totalExpenses ?? 0)
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {isAdmin && data.bankDeposits && (
+            <Card hover className="mb-4">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Bank deposits</CardTitle>
+                <p className="text-xs text-muted-foreground">Money received into bank accounts in this period</p>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold tabular-nums mb-3">
+                  {formatCurrency(data.summary.totalBankDeposits ?? 0)}
+                </p>
+                {data.bankDeposits.length > 0 ? (
+                  <div className="space-y-2">
+                    {data.bankDeposits.map((bank) => (
+                      <div key={bank.id} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="font-medium">{bank.name}</span>
+                        <span className="font-semibold text-primary tabular-nums">
+                          {formatCurrency(bank.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No deposits in this period</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {isAdmin && data.dailySalesProfit && data.dailySalesProfit.length > 0 && (
+            <Card hover className="mb-4">
+              <CardHeader>
+                <CardTitle className="text-base">Daily sales &amp; profit</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="pb-2 pr-3">Day</th>
+                        <th className="pb-2 pr-3 text-right">Sales</th>
+                        <th className="pb-2 text-right">Profit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.dailySalesProfit.map((row) => (
+                        <tr key={row.key} className="border-b border-border/60">
+                          <td className="py-2 pr-3 font-medium">{row.label}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{formatCompact(row.sales)}</td>
+                          <td className="py-2 text-right tabular-nums text-success">
+                            <SensitiveProfitText
+                              value={`+${formatCompact(row.profit)}`}
+                              className="justify-end text-success"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-semibold">
+                        <td className="py-2 pr-3">Total</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">
+                          {formatCompact(data.summary.totalRevenue ?? 0)}
+                        </td>
+                        <td className="py-2 text-right tabular-nums text-success">
+                          <SensitiveProfitText
+                            value={`+${formatCompact(data.summary.totalProfit ?? 0)}`}
+                            className="justify-end text-success"
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid gap-6 lg:grid-cols-2 mb-6">
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <Card hover>
@@ -661,7 +859,7 @@ export function ReportClient({
 
           <div
             className={`grid gap-6 mb-6 ${
-              isAdmin && channel === "all" && data.saleTypeBreakdown ? "lg:grid-cols-2" : "max-w-md"
+              isAdmin && channel === "all" && data.profitByChannel ? "lg:grid-cols-3" : "max-w-md"
             }`}
           >
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
@@ -680,6 +878,33 @@ export function ReportClient({
                 </CardContent>
               </Card>
             </motion.div>
+
+            {isAdmin && channel === "all" && data.profitByChannel ? (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+                <Card hover className="h-full">
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <PieChart className="h-4 w-4 text-primary" />
+                      Profit Breakdown
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-hidden">
+                    <DonutChart
+                      items={data.profitByChannel}
+                      formatValue={(v) => formatCurrency(v)}
+                    />
+                    <div className="mt-3 space-y-1 text-sm">
+                      {data.profitByChannel.map((row) => (
+                        <div key={row.label} className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground">{row.label}</span>
+                          <SensitiveProfitText value={formatCurrency(row.value)} className="font-semibold" />
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ) : null}
 
             {isAdmin && channel === "all" && data.saleTypeBreakdown ? (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
@@ -701,6 +926,76 @@ export function ReportClient({
             ) : null}
           </div>
 
+          {isAdmin && data.importProfits && data.importProfits.length > 0 && (
+            <Card hover className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-base">Profit per import</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {data.importProfits.map((imp) => (
+                    <div
+                      key={imp.id}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-border/70 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{imp.batchNumber}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {imp.notes ? `${imp.notes} · ` : ""}
+                          {formatCompact(imp.importCost)} cost · {imp.percentSold}% sold
+                        </p>
+                      </div>
+                      <SensitiveProfitText
+                        value={`${imp.profit >= 0 ? "+" : ""}${formatCompact(imp.profit)}`}
+                        className={`shrink-0 text-lg font-bold ${imp.profit >= 0 ? "text-success" : "text-destructive"}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {isAdmin && data.productProfits && data.productProfits.length > 0 && (
+            <Card hover className="mb-6">
+              <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+                <CardTitle className="text-base">Profit per product</CardTitle>
+                <Input
+                  type="search"
+                  placeholder="Search products…"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="h-8 w-48 text-sm"
+                />
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {filteredProductProfits.map((product) => (
+                    <div
+                      key={product.name}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-border/70 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{product.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {product.itemsSold.toLocaleString()} sold · {formatCompact(product.revenue)} revenue ·{" "}
+                          {formatCompact(product.cost)} cost
+                        </p>
+                      </div>
+                      <SensitiveProfitText
+                        value={formatCompact(product.profit)}
+                        className="shrink-0 text-lg font-bold text-success"
+                      />
+                    </div>
+                  ))}
+                  {filteredProductProfits.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No products match your search</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {isAdmin && (
             <div className="grid gap-6 lg:grid-cols-2 mb-6">
               {data.topProducts && data.topProducts.length > 0 && (
@@ -716,6 +1011,7 @@ export function ReportClient({
                             <th className="pb-2 pr-3">Product</th>
                             <th className="pb-2 pr-3 text-right">Items</th>
                             <th className="pb-2 pr-3 text-right">Revenue</th>
+                            <th className="pb-2 pr-3 text-right">Cost</th>
                             <th className="pb-2 text-right">Profit</th>
                           </tr>
                         </thead>
@@ -725,7 +1021,10 @@ export function ReportClient({
                               <td className="py-2 pr-3 font-medium">{product.name}</td>
                               <td className="py-2 pr-3 text-right tabular-nums">{product.itemsSold}</td>
                               <td className="py-2 pr-3 text-right tabular-nums">{formatCurrency(product.revenue)}</td>
-                              <td className="py-2 text-right tabular-nums text-success">{formatCurrency(product.profit)}</td>
+                              <td className="py-2 pr-3 text-right tabular-nums">{formatCurrency(product.cost)}</td>
+                              <td className="py-2 text-right tabular-nums text-success">
+                                <SensitiveProfitText value={formatCurrency(product.profit)} className="justify-end text-success" />
+                              </td>
                             </tr>
                           ))}
                         </tbody>
