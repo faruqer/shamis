@@ -9,7 +9,8 @@ if [ -z "$JWT_SECRET" ] || [ "$JWT_SECRET" = "your-super-secret-jwt-key-change-i
 fi
 
 echo "Applying database schema..."
-node ./node_modules/prisma/build/index.js db push --skip-generate
+NODE_PATH=/app/prisma-cli/node_modules \
+  node /app/prisma-cli/node_modules/prisma/build/index.js db push --skip-generate --schema=/app/prisma/schema.prisma
 
 if [ "$SEED_ADMIN" = "true" ]; then
   echo "Seeding admin account..."
