@@ -1,6 +1,6 @@
 # Deploy with Docker
 
-Run **Stock & Money** in Docker on port **7777**, with optional HTTPS on your domain.
+Run **Stock & Money** in Docker on port **7777**, with optional HTTPS on your domain via **nginx + certbot** (free Let's Encrypt certificates).
 
 ## Requirements
 
@@ -63,7 +63,9 @@ docker compose down
 
 Database files live in the Docker volume `app-data` and persist across restarts.
 
-## 4. Deploy with your domain (HTTPS)
+## 4. Deploy with your domain (nginx + Let's Encrypt)
+
+### DNS
 
 Point DNS at your server:
 
@@ -72,40 +74,81 @@ Point DNS at your server:
 | A | `@` | Your server public IP |
 | A | `www` | Your server public IP (optional) |
 
-Wait until DNS resolves (often 5–30 minutes):
+Wait until DNS resolves:
 
 ```bash
 ping yourdomain.com
 ```
 
-Set domain values in `.env`:
+### Firewall
+
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 7777/tcp
+sudo ufw enable
+```
+
+### Environment
+
+Set in `.env`:
 
 ```env
 DOMAIN=yourdomain.com
 ACME_EMAIL=you@yourdomain.com
 COOKIE_SECURE=true
 SEED_ADMIN=false
+CERTBOT_STAGING=0
 ```
 
-(`SEED_ADMIN=false` after the first deploy so the admin password is not reset on restart.)
+- `SEED_ADMIN=false` after the first deploy so the admin password is not reset on restart.
+- Optional: set `CERTBOT_STAGING=1` for a test run first (avoids Let's Encrypt rate limits while debugging).
 
-Start app + Caddy (automatic Let's Encrypt certificate):
+### Issue certificate and start nginx
+
+On the server (Linux):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.domain.yml up -d --build
+chmod +x docker/init-letsencrypt.sh
+./docker/init-letsencrypt.sh
 ```
+
+This script will:
+
+1. Start the app
+2. Create a temporary certificate so nginx can boot
+3. Request a **real Let's Encrypt certificate** via certbot
+4. Reload nginx and start automatic renewal
 
 Open:
 
 - **https://yourdomain.com**
 
-Caddy listens on **80/443** and proxies to the app. Port **7777** still works for direct access if the firewall allows it.
+nginx listens on **80/443**. Port **7777** still works for direct access if the firewall allows it.
+
+### Manual start (after certificates exist)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.domain.yml up -d --build
+```
+
+### Renew certificates
+
+Certbot runs in a sidecar container and renews certificates automatically every 12 hours. To renew manually:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.domain.yml run --rm certbot renew
+docker compose -f docker-compose.yml -f docker-compose.domain.yml exec nginx nginx -s reload
+```
 
 ## 5. Useful commands
 
 ```bash
 # Rebuild after code changes
 docker compose up -d --build
+
+# Domain stack
+docker compose -f docker-compose.yml -f docker-compose.domain.yml up -d --build
 
 # View running containers
 docker compose ps
@@ -117,24 +160,13 @@ docker compose exec app sh
 docker compose exec app cat /data/dev.db > backup-$(date +%F).db
 ```
 
-## 6. Firewall examples
-
-**UFW (Ubuntu):**
-
-```bash
-sudo ufw allow 7777/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-```
-
-**Windows Server:** allow inbound TCP **7777**, **80**, and **443** in Windows Firewall.
-
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | `JWT_SECRET` error on start | Set a real secret in `.env`, not the placeholder |
-| Login works on HTTP but not HTTPS | Set `COOKIE_SECURE=true` when using Caddy/HTTPS |
-| Certificate fails | Confirm `DOMAIN` matches DNS and ports 80/443 reach the server |
-| Blank page after deploy | Run `docker compose logs app` and rebuild: `docker compose up -d --build` |
+| Login works on HTTP but not HTTPS | Set `COOKIE_SECURE=true` when using nginx/HTTPS |
+| Certificate request fails | Confirm `DOMAIN` DNS points to this server; ports 80/443 reachable from the internet |
+| Rate limit from Let's Encrypt | Set `CERTBOT_STAGING=1`, run init script, then switch to `0` and run again |
+| nginx fails to start | Run `./docker/init-letsencrypt.sh` — nginx needs cert files under `/etc/letsencrypt/live/$DOMAIN/` |
+| Blank page after deploy | Run `docker compose logs app` and rebuild |
