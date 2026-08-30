@@ -1,0 +1,27 @@
+# Optional HTTPS reverse proxy for a custom domain.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.domain.yml up -d --build
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+  app:
+    environment:
+      COOKIE_SECURE: "true"
+
+volumes:
+  caddy-data:
+  caddy-config:

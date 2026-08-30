@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "7777:3000"
+    environment:
+      DATABASE_URL: file:/data/dev.db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_ADMIN: ${SEED_ADMIN:-true}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@stockmoney.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+    volumes:
+      - app-data:/data
+
+volumes:
+  app-data:

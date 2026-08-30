@@ -45,14 +45,16 @@ export interface SaleProfitItem {
   unitPrice?: number | string;
   carton: {
     itemsPerCarton: number;
-    warehouseLeavingPrice?: string | number | null;
-    product: { unitCost: string };
+    warehouseLeavingPrice?: number | string | null;
+    product: { unitCost: number | string };
   };
 }
 
-function parseAmount(value: number | string | null | undefined) {
+function parseAmount(value: number | string | { toString(): string } | null | undefined) {
   if (value === null || value === undefined) return 0;
-  return typeof value === "string" ? parseFloat(value) : value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") return parseFloat(value) || 0;
+  return parseFloat(value.toString()) || 0;
 }
 
 export function getSaleItemCost(

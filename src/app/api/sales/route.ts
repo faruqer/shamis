@@ -53,6 +53,59 @@ const saleSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+type SaleListRecord = Awaited<ReturnType<typeof prisma.sale.findMany>>[number] & {
+  client?: { name: string } | null;
+  soldBy?: { name: string } | null;
+  retailSoldBy?: { name: string } | null;
+  items: {
+    cartonsSold: number;
+    itemsSold: number;
+    unitPrice: { toString(): string };
+    totalPrice: { toString(): string };
+    carton: {
+      itemsPerCarton: number;
+      warehouseLeavingPrice?: { toString(): string } | null;
+      product: { name: string; unitCost?: { toString(): string } };
+    };
+  }[];
+  payments?: {
+    paymentMethod?: string | null;
+    amount?: { toString(): string };
+    bankAccount?: { name: string } | null;
+  }[];
+};
+
+function serializeSaleListRecord(sale: SaleListRecord) {
+  return {
+    ...sale,
+    totalAmount: decimalToNumber(sale.totalAmount),
+    paidAmount: decimalToNumber(sale.paidAmount),
+    items: sale.items.map((item) => ({
+      ...item,
+      unitPrice: decimalToNumber(item.unitPrice),
+      totalPrice: decimalToNumber(item.totalPrice),
+      carton: {
+        ...item.carton,
+        warehouseLeavingPrice:
+          item.carton.warehouseLeavingPrice != null
+            ? decimalToNumber(item.carton.warehouseLeavingPrice)
+            : null,
+        product: {
+          ...item.carton.product,
+          unitCost:
+            item.carton.product.unitCost != null
+              ? decimalToNumber(item.carton.product.unitCost)
+              : undefined,
+        },
+      },
+    })),
+    payments: sale.payments?.map((payment) => ({
+      ...payment,
+      amount: payment.amount != null ? decimalToNumber(payment.amount) : undefined,
+    })),
+  };
+}
+
 async function resolveBankAccountId(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   paymentMethod: PaymentMethod | undefined,
@@ -216,20 +269,23 @@ export async function GET(request: NextRequest) {
     });
 
     if (isSalesperson(session)) {
-      const sanitized = sales.map((sale) => ({
-        ...sale,
-        items: sale.items.map((item) => ({
-          ...item,
-          carton: {
-            itemsPerCarton: item.carton.itemsPerCarton,
-            product: { name: item.carton.product.name },
-          },
-        })),
-      }));
+      const sanitized = sales.map((sale) => {
+        const serialized = serializeSaleListRecord(sale as SaleListRecord);
+        return {
+          ...serialized,
+          items: serialized.items.map((item) => ({
+            ...item,
+            carton: {
+              itemsPerCarton: item.carton.itemsPerCarton,
+              product: { name: item.carton.product.name },
+            },
+          })),
+        };
+      });
       return jsonResponse(sanitized);
     }
 
-    return jsonResponse(sales);
+    return jsonResponse(sales.map((sale) => serializeSaleListRecord(sale as SaleListRecord)));
   } catch (error) {
     return handleApiError(error);
   }

@@ -25,6 +25,8 @@ const withPWA = require("next-pwa")({
   ],
 });
 
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  output: "standalone",
+};
 
 export default withPWA(nextConfig);

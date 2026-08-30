@@ -35,8 +35,8 @@ interface SaleRecord {
   id: string;
   saleNumber: string;
   type: SaleType;
-  totalAmount: string;
-  paidAmount: string;
+  totalAmount: number | string;
+  paidAmount: number | string;
   paymentStatus: string;
   saleDate: string;
   client?: { name: string };
@@ -50,12 +50,12 @@ interface SaleRecord {
   items: {
     cartonsSold: number;
     itemsSold: number;
-    unitPrice?: string;
-    totalPrice?: string;
+    unitPrice?: number | string;
+    totalPrice?: number | string;
     carton: {
       itemsPerCarton: number;
-      warehouseLeavingPrice?: string | null;
-      product: { name: string; unitCost?: string };
+      warehouseLeavingPrice?: number | string | null;
+      product: { name: string; unitCost?: number | string };
     };
   }[];
 }
@@ -92,8 +92,8 @@ function toDateInputValue(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
-function parseAmount(value: string) {
-  return parseFloat(value) || 0;
+function parseAmount(value: number | string) {
+  return typeof value === "number" ? value : parseFloat(value) || 0;
 }
 
 function getPeriodRange(mode: PeriodMode, customDate: string) {
@@ -173,8 +173,22 @@ export function SalesClient({
   const loadSales = useCallback(() => {
     setLoading(true);
     fetch("/api/sales")
-      .then((r) => r.json())
-      .then(setSales)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 401) {
+            window.location.href = "/login";
+            return;
+          }
+          throw new Error(
+            typeof data === "object" && data && "error" in data
+              ? String(data.error)
+              : "Failed to load sales"
+          );
+        }
+        setSales(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setSales([]))
       .finally(() => setLoading(false));
   }, []);
 
