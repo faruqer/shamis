@@ -2,6 +2,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  Role,
   SaleType,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -44,7 +45,10 @@ export function assertCanModifySale(
   sale: { type: SaleType; shopId: string | null; retailSoldById: string | null }
 ) {
   if (sale.type === SaleType.SHOP_TRANSFER) {
-    throw new Error("Shop transfers cannot be reversed or edited");
+    if (session.role !== Role.ADMIN) {
+      throw new Error("Only admins can reverse shop transfers");
+    }
+    return;
   }
   if (isSalesperson(session)) {
     if (sale.type !== SaleType.RETAIL) {
@@ -70,6 +74,102 @@ async function restoreSaleStock(tx: Tx, saleId: string) {
       data: {
         remainingCartons: item.carton.remainingCartons + item.cartonsSold,
         remainingItems: item.carton.remainingItems + moved,
+      },
+    });
+  }
+}
+
+async function reverseShopTransferStock(
+  tx: Tx,
+  sale: {
+    shopId: string | null;
+    items: { cartonId: string; cartonsSold: number; itemsSold: number }[];
+  }
+) {
+  if (!sale.shopId) throw new Error("Transfer shop not found");
+
+  for (const item of sale.items) {
+    const cartonsToReverse = item.cartonsSold;
+    const itemsToReverse = item.itemsSold;
+
+    const carton = await tx.carton.findUnique({
+      where: { id: item.cartonId },
+      include: { product: { select: { name: true } } },
+    });
+    if (!carton) throw new Error("Carton not found");
+
+    const productName = carton.product.name;
+
+    if (carton.location === "SHOP" && carton.shopId === sale.shopId) {
+      if (
+        carton.remainingCartons < cartonsToReverse ||
+        carton.remainingItems < itemsToReverse
+      ) {
+        throw new Error(
+          `Cannot reverse transfer for "${productName}": shop stock was partially sold or moved`
+        );
+      }
+
+      await tx.carton.update({
+        where: { id: carton.id },
+        data: {
+          location: "WAREHOUSE",
+          shopId: null,
+          warehouseLeavingPrice: null,
+          retailUnitPrice: null,
+        },
+      });
+      continue;
+    }
+
+    if (carton.location !== "WAREHOUSE") {
+      throw new Error(
+        `Cannot reverse transfer for "${productName}": stock is in an unexpected location`
+      );
+    }
+
+    const shopCarton = await tx.carton.findFirst({
+      where: {
+        productId: carton.productId,
+        location: "SHOP",
+        shopId: sale.shopId,
+      },
+    });
+
+    if (!shopCarton) {
+      throw new Error(`Shop stock not found for "${productName}"`);
+    }
+
+    if (
+      shopCarton.remainingCartons < cartonsToReverse ||
+      shopCarton.remainingItems < itemsToReverse
+    ) {
+      throw new Error(
+        `Cannot reverse transfer for "${productName}": not enough stock left in the shop (some may have been sold)`
+      );
+    }
+
+    const newShopCartons = shopCarton.remainingCartons - cartonsToReverse;
+    const newShopItems = shopCarton.remainingItems - itemsToReverse;
+
+    if (newShopCartons === 0 && newShopItems === 0) {
+      await tx.carton.delete({ where: { id: shopCarton.id } });
+    } else {
+      await tx.carton.update({
+        where: { id: shopCarton.id },
+        data: {
+          remainingCartons: newShopCartons,
+          remainingItems: newShopItems,
+          totalCartons: shopCarton.totalCartons - cartonsToReverse,
+        },
+      });
+    }
+
+    await tx.carton.update({
+      where: { id: carton.id },
+      data: {
+        remainingCartons: carton.remainingCartons + cartonsToReverse,
+        remainingItems: carton.remainingItems + itemsToReverse,
       },
     });
   }
@@ -106,7 +206,11 @@ export async function reverseSale(session: SessionUser, saleId: string) {
   assertCanModifySale(session, sale);
 
   await prisma.$transaction(async (tx) => {
-    await restoreSaleStock(tx, saleId);
+    if (sale.type === SaleType.SHOP_TRANSFER) {
+      await reverseShopTransferStock(tx, sale);
+    } else {
+      await restoreSaleStock(tx, saleId);
+    }
     await clearSaleFinancials(tx, saleId);
     await tx.saleItem.deleteMany({ where: { saleId } });
     await tx.sale.delete({ where: { id: saleId } });

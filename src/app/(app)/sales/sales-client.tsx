@@ -286,13 +286,17 @@ export function SalesClient({
   };
 
   const canModifySale = (sale: SaleRecord) =>
-    sale.type === "RETAIL" || (!isShopStaff && sale.type === "WHOLESALE");
+    sale.type === "RETAIL" ||
+    (!isShopStaff && (sale.type === "WHOLESALE" || sale.type === "SHOP_TRANSFER"));
 
   async function handleReverseSale(sale: SaleRecord) {
     const label = sale.items.map((i) => i.carton.product.name).join(", ");
+    const isTransfer = sale.type === "SHOP_TRANSFER";
     if (
       !confirm(
-        `Reverse this sale?\n\n${label}\n\nStock will be restored and the sale will be removed.`
+        isTransfer
+          ? `Reverse this shop transfer?\n\n${label}\n\nStock will be moved back to the warehouse and the transfer will be removed.`
+          : `Reverse this sale?\n\n${label}\n\nStock will be restored and the sale will be removed.`
       )
     ) {
       return;
@@ -585,27 +589,31 @@ export function SalesClient({
                         </div>
                       )}
 
-                      {sale.type !== "SHOP_TRANSFER" && (
-                        <div
-                          className={cn(
-                            "col-start-2 text-right space-y-1 self-end justify-self-end",
-                            showModifyActions ? "row-start-2" : "row-start-1 row-span-2"
-                          )}
-                        >
-                          <p className="text-lg font-bold">{formatCurrency(sale.totalAmount)}</p>
-                          <Badge variant={statusVariant(sale.paymentStatus)}>{sale.paymentStatus}</Badge>
-                          {paidTotal > 0 ? (
-                            <p className="text-xs text-muted-foreground">
-                              Paid: {formatCurrency(paidTotal)}
-                              {paymentMethods && (
-                                <span className="text-foreground/80"> · {paymentMethods}</span>
-                              )}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">Nothing paid yet</p>
-                          )}
-                        </div>
-                      )}
+                      <div
+                        className={cn(
+                          "col-start-2 text-right space-y-1 self-end justify-self-end",
+                          showModifyActions ? "row-start-2" : "row-start-1 row-span-2"
+                        )}
+                      >
+                        <p className="text-lg font-bold">{formatCurrency(sale.totalAmount)}</p>
+                        {sale.type === "SHOP_TRANSFER" ? (
+                          <p className="text-xs text-muted-foreground">Transfer value</p>
+                        ) : (
+                          <>
+                            <Badge variant={statusVariant(sale.paymentStatus)}>{sale.paymentStatus}</Badge>
+                            {paidTotal > 0 ? (
+                              <p className="text-xs text-muted-foreground">
+                                Paid: {formatCurrency(paidTotal)}
+                                {paymentMethods && (
+                                  <span className="text-foreground/80"> · {paymentMethods}</span>
+                                )}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">Nothing paid yet</p>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
