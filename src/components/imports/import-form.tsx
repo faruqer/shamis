@@ -293,6 +293,29 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
     router.push("/imports");
   }
 
+  function handleFormKeyDown(e: React.KeyboardEvent<HTMLFormElement>) {
+    if (e.key !== "Enter") return;
+
+    const target = e.target;
+    if (target instanceof HTMLButtonElement || target instanceof HTMLTextAreaElement) return;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+    if (target instanceof HTMLInputElement && (target.readOnly || target.type === "submit")) return;
+
+    e.preventDefault();
+
+    const form = e.currentTarget;
+    const selector =
+      'input:not([readonly]):not([type="hidden"]):not([tabindex="-1"]), select:not([disabled]), textarea:not([disabled])';
+    const fields = Array.from(form.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => el.offsetParent !== null && !el.hasAttribute("disabled")
+    );
+
+    const index = fields.indexOf(target);
+    if (index >= 0 && index < fields.length - 1) {
+      fields[index + 1].focus();
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -393,7 +416,7 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
         </Button>
       }
     >
-      <form onSubmit={handleSubmit} className="max-w-5xl">
+      <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} className="max-w-5xl">
         {error && (
           <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
@@ -708,9 +731,14 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
                 <span className="block text-xs mt-0.5">Shipping, customs, and credit are added by the owner.</span>
               </p>
             )}
-            <Button type="submit" loading={loading}>
-              {mode === "edit" ? "Save Changes" : "Create Batch"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={addProduct}>
+                <Plus className="h-4 w-4" /> Add
+              </Button>
+              <Button type="submit" loading={loading}>
+                {mode === "edit" ? "Save Changes" : "Create Batch"}
+              </Button>
+            </div>
           </div>
         </div>
       </form>

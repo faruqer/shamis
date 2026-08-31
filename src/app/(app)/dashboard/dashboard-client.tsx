@@ -89,6 +89,14 @@ interface SalespersonDashboardData {
 
 type DashboardData = AdminDashboardData | SalespersonDashboardData;
 
+function isSalespersonDashboard(data: DashboardData): data is SalespersonDashboardData {
+  return data.scoped === true;
+}
+
+function isAdminDashboard(data: DashboardData): data is AdminDashboardData {
+  return data.scoped === false;
+}
+
 interface DashboardUser {
   name: string;
   role: Role;
@@ -193,15 +201,36 @@ function SalesTrendPanel({ trend, title }: { trend: SalesTrend; title: string })
 export function DashboardClient({ user }: { user: DashboardUser }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then(setData)
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.error || "Failed to load dashboard");
+        }
+        if (body.scoped !== true && body.scoped !== false) {
+          throw new Error("Unexpected dashboard response");
+        }
+        setData(body);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load dashboard");
+      })
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <DashboardLayout user={user} title="Dashboard"><LoadingSpinner /></DashboardLayout>;
+  if (error) {
+    return (
+      <DashboardLayout user={user} title="Dashboard">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      </DashboardLayout>
+    );
+  }
   if (!data) return null;
 
   const statusVariant = (status: string) => {
@@ -210,7 +239,7 @@ export function DashboardClient({ user }: { user: DashboardUser }) {
     return "danger";
   };
 
-  if (data.scoped) {
+  if (isSalespersonDashboard(data)) {
     return (
       <DashboardLayout
         user={user}
@@ -314,6 +343,16 @@ export function DashboardClient({ user }: { user: DashboardUser }) {
             </CardContent>
           </Card>
         </motion.div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!isAdminDashboard(data)) {
+    return (
+      <DashboardLayout user={user} title="Dashboard">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          Unexpected dashboard response
+        </div>
       </DashboardLayout>
     );
   }

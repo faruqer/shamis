@@ -435,7 +435,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
   return (
     <DashboardLayout
       user={user}
-      title="Hawala"
+      title="hw"
       description={
         isAdmin
           ? "Track money transfers, confirm receipts, and manage receiving persons"
@@ -575,7 +575,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
       <Modal
         open={showTransferModal}
         onClose={() => setShowTransferModal(false)}
-        title="New Hawala Transfer"
+        title="New hw Transfer"
         description="Send money to an assigned receiving person"
         className="max-w-md"
       >
