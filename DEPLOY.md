@@ -36,8 +36,11 @@ openssl rand -base64 32
 ## 3. Build and start
 
 ```bash
+export DOCKER_BUILDKIT=1
 docker compose up -d --build
 ```
+
+First build can take **5–15 minutes** on a small VPS (`npm ci` + Next.js build). Later rebuilds are faster. Only one `npm install` runs during the build now.
 
 Open:
 

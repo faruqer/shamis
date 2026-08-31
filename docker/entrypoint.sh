@@ -2,16 +2,21 @@
 set -e
 
 mkdir -p /data
-chown nextjs:nodejs /data 2>/dev/null || true
 
 if [ -z "$JWT_SECRET" ] || [ "$JWT_SECRET" = "your-super-secret-jwt-key-change-in-production" ]; then
   echo "ERROR: Set a strong JWT_SECRET in your .env file before starting the container."
   exit 1
 fi
 
+if [ ! -f /data/dev.db ]; then
+  echo "Creating new database from template..."
+  cp /app/prisma/template.db /data/dev.db
+  chown nextjs:nodejs /data/dev.db
+fi
+
 echo "Applying database schema..."
-NODE_PATH=/app/prisma-cli/node_modules \
-  node /app/prisma-cli/node_modules/prisma/build/index.js db push --skip-generate --schema=/app/prisma/schema.prisma
+prisma db push --skip-generate --schema=/app/prisma/schema.prisma
+chown nextjs:nodejs /data/dev.db 2>/dev/null || true
 
 if [ "$SEED_ADMIN" = "true" ]; then
   echo "Seeding admin account..."
