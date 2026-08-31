@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -54,7 +55,14 @@ interface SidebarProps {
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { expanded, setExpanded } = useSidebar();
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
 
   const filteredItems = navItems.filter(
     (item) => !item.roles || item.roles.includes(user.role)
@@ -131,26 +139,27 @@ export function Sidebar({ user }: SidebarProps) {
           >
             {user.role === Role.ADMIN ? OWNER_NAME : "Salesperson"}
           </motion.span>
-          <form action="/api/auth/logout" method="POST" className={cn(expanded ? "flex-1" : "w-full")}>
-            <button
-              type="submit"
-              title="Sign Out"
-              className={cn(
-                "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-colors w-full",
-                expanded ? "justify-end" : "justify-center"
-              )}
+          <div className={cn(expanded ? "flex-1" : "w-full")}>
+          <button
+            type="button"
+            onClick={handleLogout}
+            title="Sign Out"
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-colors w-full",
+              expanded ? "justify-end" : "justify-center"
+            )}
+          >
+            <LogOut className="h-5 w-5 shrink-0" />
+            <motion.span
+              initial={false}
+              animate={{ opacity: expanded ? 1 : 0, width: expanded ? "auto" : 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden whitespace-nowrap"
             >
-              <LogOut className="h-5 w-5 shrink-0" />
-              <motion.span
-                initial={false}
-                animate={{ opacity: expanded ? 1 : 0, width: expanded ? "auto" : 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden whitespace-nowrap"
-              >
-                Sign Out
-              </motion.span>
-            </button>
-          </form>
+              Sign Out
+            </motion.span>
+          </button>
+          </div>
         </div>
       </div>
     </motion.aside>

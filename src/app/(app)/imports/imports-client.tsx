@@ -20,7 +20,7 @@ import {
   getImportTotalValue,
   getImportsSummary,
   getProductLandedValue,
-  getProductFinalUnitCost,
+  type ImportLike,
 } from "@/lib/import-utils";
 import { Role } from "@prisma/client";
 
@@ -34,14 +34,13 @@ interface ImportRecord {
   creditPaid: boolean;
   notes: string | null;
   createdBy: { name: string };
+  currentProfit?: number;
   creditPersons?: { id: string; name: string; amount: string; paidAmount?: string }[];
   costs?: { id: string; name: string; amount: string }[];
   products: {
     id: string;
     name: string;
-    unitCost: string;
-    productCustomCost?: string;
-    taxSeaFreight?: string;
+    unitCost?: string;
     cartons: {
       totalCartons: number;
       itemsPerCarton: number;
@@ -49,6 +48,25 @@ interface ImportRecord {
       remainingItems: number;
     }[];
   }[];
+}
+
+function toImportLike(imp: ImportRecord): ImportLike {
+  return {
+    customCost: imp.customCost,
+    costs: imp.costs?.map((cost) => ({ name: cost.name, amount: cost.amount })),
+    creditAmount: imp.creditAmount,
+    creditPaidAmount: imp.creditPaidAmount,
+    creditPaid: imp.creditPaid,
+    products: (imp.products ?? []).map((product) => ({
+      unitCost: product.unitCost ?? "0",
+      cartons: product.cartons.map((carton) => ({
+        totalCartons: carton.totalCartons,
+        itemsPerCarton: carton.itemsPerCarton,
+        remainingCartons: carton.remainingCartons,
+        remainingItems: carton.remainingItems,
+      })),
+    })),
+  };
 }
 
 function SummaryStat({
@@ -129,7 +147,7 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
     }
   }
 
-  const summary = getImportsSummary(imports);
+  const summary = getImportsSummary(imports.map(toImportLike));
 
   return (
     <DashboardLayout
@@ -212,11 +230,13 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
 
           <div className="grid gap-4">
             {imports.map((imp, index) => {
-              const totalValue = getImportTotalValue(imp);
-              const costsTotal = getImportCostsTotal(imp);
-              const creditOutstanding = getImportCreditOutstanding(imp);
-              const creditPaidAmount = getImportCreditPaidAmount(imp);
+              const importLike = toImportLike(imp);
+              const totalValue = getImportTotalValue(importLike);
+              const costsTotal = getImportCostsTotal(importLike);
+              const creditOutstanding = getImportCreditOutstanding(importLike);
+              const creditPaidAmount = getImportCreditPaidAmount(importLike);
               const creditAmount = parseFloat(imp.creditAmount) || 0;
+              const currentProfit = imp.currentProfit ?? 0;
 
               return (
                 <motion.div
@@ -252,6 +272,19 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                           <div className="text-right">
                             <p className="text-xl font-bold text-primary">{formatCurrency(totalValue)}</p>
                             <p className="text-xs text-muted-foreground">Total value</p>
+                            <p
+                              className={cn(
+                                "mt-1 text-sm font-semibold tabular-nums",
+                                currentProfit > 0
+                                  ? "text-success"
+                                  : currentProfit < 0
+                                    ? "text-destructive"
+                                    : "text-muted-foreground"
+                              )}
+                            >
+                              {formatCurrency(currentProfit)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">Current profit</p>
                           </div>
                         )}
                         <div className="flex gap-1">
@@ -343,20 +376,12 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                               0
                             );
                             const totalCartons = carton?.totalCartons ?? 0;
-                            const itemsPerCarton = carton?.itemsPerCarton ?? 0;
-                            const totalItems = totalCartons * itemsPerCarton;
-                            const productValue = getProductLandedValue({
-                              unitCost: product.unitCost || 0,
-                              productCustomCost: product.productCustomCost || 0,
-                              taxSeaFreight: product.taxSeaFreight || 0,
-                              cartons: product.cartons,
-                            });
-                            const finalUnitCost = getProductFinalUnitCost({
-                              unitCost: product.unitCost || 0,
-                              productCustomCost: product.productCustomCost || 0,
-                              taxSeaFreight: product.taxSeaFreight || 0,
-                              cartons: product.cartons,
-                            });
+                            const productValue = isAdmin
+                              ? getProductLandedValue({
+                                  unitCost: product.unitCost || 0,
+                                  cartons: product.cartons,
+                                })
+                              : 0;
 
                             return (
                               <div
@@ -367,25 +392,17 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                                   {product.name}
                                 </p>
                                 <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
-                                  {formatCurrency(product.unitCost || 0)}/u
-                                  {totalItems > 0 && (
-                                    <> · Final {formatCurrency(finalUnitCost)}/u</>
+                                  {isAdmin && (
+                                    <>
+                                      {formatCurrency(product.unitCost || 0)}/u ·{" "}
+                                    </>
                                   )}
-                                  {" · "}
                                   {remainingCartons}/{totalCartons} ct
                                 </p>
-                                <p className="mt-0.5 text-[11px] font-bold leading-tight text-primary tabular-nums">
-                                  {formatCurrency(productValue)}
-                                </p>
                                 {isAdmin && (
-                                  <>
-                                    <p className="mt-0.5 truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
-                                      Custom: {formatCurrency(product.productCustomCost || 0)}
-                                    </p>
-                                    <p className="truncate text-[10px] leading-tight text-muted-foreground tabular-nums">
-                                      Tax & SF: {formatCurrency(product.taxSeaFreight || 0)}
-                                    </p>
-                                  </>
+                                  <p className="mt-0.5 text-[11px] font-bold leading-tight text-primary tabular-nums">
+                                    {formatCurrency(productValue)}
+                                  </p>
                                 )}
                               </div>
                             );

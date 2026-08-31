@@ -128,6 +128,7 @@ export function RetailSaleForm({
   const [paidAmount, setPaidAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  const [saleDate, setSaleDate] = useState(new Date().toISOString().split("T")[0]);
   const [items, setItems] = useState<RetailItemInput[]>([
     { cartonId: initialCartonId ?? "", cartonsSold: "", itemsSold: "", unitPrice: "" },
   ]);
@@ -190,6 +191,11 @@ export function RetailSaleForm({
         setInventory(adjustedInventory);
         setClientInput(sale.client?.name ?? "");
         setClientId(sale.clientId ?? "");
+        setSaleDate(
+          sale.saleDate
+            ? new Date(sale.saleDate).toISOString().split("T")[0]
+            : new Date().toISOString().split("T")[0]
+        );
         setPaymentOption(sale.paymentStatus as PaymentOption);
         setPaidAmount(
           sale.paymentStatus === "PARTIAL" ? String(parseFloat(sale.paidAmount) || "") : ""
@@ -338,6 +344,7 @@ export function RetailSaleForm({
       const payload = {
         clientId: clientId || undefined,
         clientName: !clientId ? clientInput.trim() : undefined,
+        saleDate,
         paymentOption,
         paidAmount: paymentOption === "PARTIAL" ? parseFloat(paidAmount) || 0 : undefined,
         paymentMethod: showPaymentMethod ? paymentMethod : undefined,
@@ -515,6 +522,16 @@ export function RetailSaleForm({
                 <User className="h-3.5 w-3.5" />
                 Client
               </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Sale date</Label>
+                <Input
+                  type="date"
+                  value={saleDate}
+                  onChange={(e) => setSaleDate(e.target.value)}
+                  required
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-sm">Client *</Label>
                 <div className="relative">

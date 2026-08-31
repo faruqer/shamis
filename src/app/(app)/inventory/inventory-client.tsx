@@ -172,6 +172,27 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
   const warehouseCount = warehouseInventory.length;
   const shopCount = shopInventory.length;
 
+  function cartonStockValue(carton: CartonRecord) {
+    const isShopStock = carton.location !== "WAREHOUSE";
+    const unitCost = carton.product.unitCost ? parseFloat(carton.product.unitCost) : 0;
+    const transferPrice = carton.warehouseLeavingPrice
+      ? parseFloat(carton.warehouseLeavingPrice)
+      : null;
+    const retailPrice = carton.retailUnitPrice ? parseFloat(carton.retailUnitPrice) : null;
+    const displayUnitPrice = isShopStock
+      ? transferPrice ?? retailPrice ?? unitCost
+      : unitCost;
+    return displayUnitPrice * carton.remainingItems;
+  }
+
+  const stockValueTotals = useMemo(
+    () => ({
+      warehouse: warehouseInventory.reduce((sum, carton) => sum + cartonStockValue(carton), 0),
+      shop: shopInventory.reduce((sum, carton) => sum + cartonStockValue(carton), 0),
+    }),
+    [warehouseInventory, shopInventory]
+  );
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return inventory
@@ -353,6 +374,29 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
         )}
       </div>
 
+      {!loading && isAdmin && (
+        <div className="mb-6 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Warehouse stock value
+            </p>
+            <p className="mt-1 text-xl font-bold text-foreground tabular-nums">
+              {formatCurrency(stockValueTotals.warehouse)}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{warehouseCount} products</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Shop stock value
+            </p>
+            <p className="mt-1 text-xl font-bold text-foreground tabular-nums">
+              {formatCurrency(stockValueTotals.shop)}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{shopCount} products</p>
+          </div>
+        </div>
+      )}
+
       {!loading && search && (
         <p className="mb-4 text-sm text-muted-foreground">
           {filtered.length} result{filtered.length !== 1 ? "s" : ""} for &ldquo;{search}&rdquo;
@@ -478,20 +522,31 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
                       </div>
 
                       <div className="mb-2 flex items-baseline justify-between rounded-lg bg-gradient-to-r from-secondary to-primary-light/50 px-2.5 py-2">
-                        <div>
-                          <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
-                            {isShopStock ? "Transfer price" : "Unit cost"}
-                          </p>
-                          <p className="text-sm font-bold text-primary-dark">
-                            {formatCurrency(displayUnitPrice)}
-                          </p>
-                        </div>
-                        {!isShopStaff && (
-                          <div className="text-right">
+                        {!isShopStaff ? (
+                          <>
+                            <div>
+                              <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+                                {isShopStock ? "Transfer price" : "Unit cost"}
+                              </p>
+                              <p className="text-sm font-bold text-primary-dark">
+                                {formatCurrency(displayUnitPrice)}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
+                                Stock value
+                              </p>
+                              <p className="text-sm font-bold text-foreground">{formatCurrency(stockValue)}</p>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="w-full text-center">
                             <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
-                              Stock value
+                              In stock
                             </p>
-                            <p className="text-sm font-bold text-foreground">{formatCurrency(stockValue)}</p>
+                            <p className="text-sm font-bold text-primary-dark">
+                              {carton.remainingItems} items
+                            </p>
                           </div>
                         )}
                       </div>

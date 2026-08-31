@@ -5,19 +5,6 @@ export interface ImportCartonLike {
   remainingItems?: number;
 }
 
-export function getEqualCustomCostPerProduct(costsTotal: number, productCount: number) {
-  if (productCount <= 0) return 0;
-  return costsTotal / productCount;
-}
-
-export function applyAverageCustomCostToProducts<
-  T extends { productCustomCost?: number },
->(items: T[], costsTotal: number): T[] {
-  const perProduct = getEqualCustomCostPerProduct(costsTotal, items.length);
-  const rounded = Math.round(perProduct * 100) / 100;
-  return items.map((product) => ({ ...product, productCustomCost: rounded }));
-}
-
 export interface ImportProductLike {
   unitCost: number | string;
   productCustomCost?: number | string | null;
@@ -45,34 +32,26 @@ export function getProductTotalItems(cartons: ImportCartonLike[]) {
   return carton.totalCartons * carton.itemsPerCarton;
 }
 
-export function getProductValue(unitCost: number | string, cartons: ImportCartonLike[]) {
-  const cost = typeof unitCost === "string" ? parseFloat(unitCost) : unitCost;
-  return cost * getProductTotalItems(cartons);
+function parseAmount(value: number | string) {
+  return typeof value === "string" ? parseFloat(value) || 0 : value;
 }
 
+/** Final unit cost — stored directly on unitCost (legacy custom/tax fields ignored). */
 export function getProductFinalUnitCost(product: ImportProductLike) {
-  const unitCost = parseAmount(product.unitCost);
-  const totalItems = getProductTotalItems(product.cartons ?? []);
-  if (totalItems <= 0) return unitCost;
+  return parseAmount(product.unitCost);
+}
 
-  const custom = parseAmount(product.productCustomCost ?? 0);
-  const tax = parseAmount(product.taxSeaFreight ?? 0);
-  return unitCost + custom / totalItems + tax / totalItems;
+export function getProductValue(unitCost: number | string, cartons: ImportCartonLike[]) {
+  return parseAmount(unitCost) * getProductTotalItems(cartons);
 }
 
 export function getProductLandedValue(product: ImportProductLike) {
-  const totalItems = getProductTotalItems(product.cartons ?? []);
-  if (totalItems <= 0) return 0;
-  return getProductFinalUnitCost(product) * totalItems;
+  return getProductFinalUnitCost(product) * getProductTotalItems(product.cartons ?? []);
 }
 
 export function getImportProductsValue(importRecord: ImportLike) {
   const products = importRecord.products ?? [];
   return products.reduce((sum, product) => sum + getProductLandedValue(product), 0);
-}
-
-function parseAmount(value: number | string) {
-  return typeof value === "string" ? parseFloat(value) || 0 : value;
 }
 
 export function getImportCostsTotal(importRecord: ImportLike) {
@@ -90,14 +69,7 @@ export function getImportCustomCost(importRecord: ImportLike) {
 }
 
 export function getImportTotalValue(importRecord: ImportLike) {
-  const productsTotal = getImportProductsValue(importRecord);
-  const allocatedCustom = (importRecord.products ?? []).reduce(
-    (sum, product) => sum + parseAmount(product.productCustomCost ?? 0),
-    0
-  );
-  const importCosts = getImportCostsTotal(importRecord);
-  const unallocatedCosts = Math.max(0, importCosts - allocatedCustom);
-  return productsTotal + unallocatedCosts;
+  return getImportProductsValue(importRecord) + getImportCostsTotal(importRecord);
 }
 
 export function getImportCreditPaidAmount(importRecord: ImportLike) {

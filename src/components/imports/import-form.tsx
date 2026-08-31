@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Role } from "@prisma/client";
-import { formatCurrency } from "@/lib/utils";
-import { applyAverageCustomCostToProducts, getImportTotalValue, getProductFinalUnitCost, getProductLandedValue } from "@/lib/import-utils";
+import { formatCurrency, cn } from "@/lib/utils";
+import { getImportTotalValue, getProductLandedValue } from "@/lib/import-utils";
 
 export interface ImportCostInput {
   name: string;
@@ -22,18 +22,17 @@ export interface ImportCreditPersonInput {
 }
 
 export interface ProductInput {
+  id?: string;
   name: string;
   unitCost: number;
   totalCartons: number;
   itemsPerCarton: number;
-  productCustomCost: number;
-  taxSeaFreight: number;
 }
 
 export interface ImportFormValues {
   batchNumber: string;
   importDate: string;
-  costs: ImportCostInput[];
+  costs?: ImportCostInput[];
   creditPersons?: ImportCreditPersonInput[];
   creditPaidAmount?: string | number;
   creditPaid: boolean;
@@ -52,8 +51,6 @@ const emptyProduct = (): ProductInput => ({
   unitCost: 0,
   totalCartons: 1,
   itemsPerCarton: 12,
-  productCustomCost: 0,
-  taxSeaFreight: 0,
 });
 
 const emptyCost = (): ImportCostInput => ({
@@ -71,8 +68,8 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
   const isAdmin = user.role === Role.ADMIN;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [pastCostNames, setPastCostNames] = useState<string[]>([]);
   const [pastProductNames, setPastProductNames] = useState<string[]>([]);
+  const [pastCostNames, setPastCostNames] = useState<string[]>([]);
   const [pastCreditPersonNames, setPastCreditPersonNames] = useState<string[]>([]);
   const [batchNumber, setBatchNumber] = useState(initialValues?.batchNumber ?? "");
   const [importDate, setImportDate] = useState(
@@ -93,26 +90,26 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
     fetch("/api/imports")
       .then((r) => r.json())
       .then((imports: {
-        costs?: { name: string }[];
         products?: { name: string }[];
+        costs?: { name: string }[];
         creditPersons?: { name: string }[];
       }[]) => {
-        const costNames = new Set<string>();
         const productNames = new Set<string>();
+        const costNames = new Set<string>();
         const creditNames = new Set<string>();
         for (const imp of imports) {
-          for (const cost of imp.costs ?? []) {
-            if (cost.name.trim()) costNames.add(cost.name.trim());
-          }
           for (const product of imp.products ?? []) {
             if (product.name.trim()) productNames.add(product.name.trim());
+          }
+          for (const cost of imp.costs ?? []) {
+            if (cost.name.trim()) costNames.add(cost.name.trim());
           }
           for (const person of imp.creditPersons ?? []) {
             if (person.name?.trim()) creditNames.add(person.name.trim());
           }
         }
-        setPastCostNames([...costNames].sort((a, b) => a.localeCompare(b)));
         setPastProductNames([...productNames].sort((a, b) => a.localeCompare(b)));
+        setPastCostNames([...costNames].sort((a, b) => a.localeCompare(b)));
         setPastCreditPersonNames([...creditNames].sort((a, b) => a.localeCompare(b)));
       })
       .catch(() => {});
@@ -131,58 +128,41 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
     setFocusProductIndex(null);
   }, [focusProductIndex, products.length]);
 
-  const previewTotal = getImportTotalValue({
-    costs: costs.map((c) => ({ name: c.name, amount: parseFloat(String(c.amount)) || 0 })),
-    products: products.map((p) => ({
-      unitCost: parseFloat(String(p.unitCost)) || 0,
-      productCustomCost: parseFloat(String(p.productCustomCost)) || 0,
-      taxSeaFreight: parseFloat(String(p.taxSeaFreight)) || 0,
-      cartons: [{ totalCartons: Number(p.totalCartons) || 0, itemsPerCarton: Number(p.itemsPerCarton) || 0 }],
-    })),
-  });
+  const previewTotal = isAdmin
+    ? getImportTotalValue({
+        costs: costs.map((c) => ({ name: c.name, amount: parseFloat(String(c.amount)) || 0 })),
+        products: products.map((p) => ({
+          unitCost: parseFloat(String(p.unitCost)) || 0,
+          cartons: [
+            {
+              totalCartons: Number(p.totalCartons) || 0,
+              itemsPerCarton: Number(p.itemsPerCarton) || 0,
+            },
+          ],
+        })),
+      })
+    : 0;
 
   const costsTotal = costs.reduce((sum, c) => sum + (parseFloat(String(c.amount)) || 0), 0);
+  const productsTotal = previewTotal - costsTotal;
+
   const creditTotal = creditPersons.reduce(
     (sum, person) => sum + (parseFloat(String(person.amount)) || 0),
     0
   );
 
-  function withCustomCostSplit(items: ProductInput[]) {
-    return applyAverageCustomCostToProducts(items, costsTotal);
-  }
-
-  useEffect(() => {
-    if (!isAdmin || costsTotal <= 0) return;
-    setProducts((current) => applyAverageCustomCostToProducts(current, costsTotal));
-  }, [isAdmin, costsTotal, products.length]);
-
-  function setProductsWithCustomCostSplit(items: ProductInput[]) {
-    setProducts(isAdmin ? withCustomCostSplit(items) : items);
-  }
-
   function addCost() {
-    const nextCosts = [...costs, emptyCost()];
-    setCosts(nextCosts);
-    if (isAdmin) setProducts(withCustomCostSplit(products));
+    setCosts([...costs, emptyCost()]);
   }
 
   function removeCost(index: number) {
-    const nextCosts = costs.filter((_, i) => i !== index);
-    setCosts(nextCosts);
-    if (isAdmin) {
-      const nextTotal = nextCosts.reduce((sum, c) => sum + (parseFloat(String(c.amount)) || 0), 0);
-      setProducts((current) => applyAverageCustomCostToProducts(current, nextTotal));
-    }
+    setCosts(costs.filter((_, i) => i !== index));
   }
 
   function updateCost(index: number, field: keyof ImportCostInput, value: string) {
     const updated = [...costs];
     updated[index] = { ...updated[index], [field]: value };
     setCosts(updated);
-    if (isAdmin) {
-      const nextTotal = updated.reduce((sum, c) => sum + (parseFloat(String(c.amount)) || 0), 0);
-      setProducts((current) => applyAverageCustomCostToProducts(current, nextTotal));
-    }
   }
 
   function addCreditPerson() {
@@ -201,14 +181,12 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
 
   function addProduct() {
     const newIndex = products.length;
-    const nextProducts = withCustomCostSplit([...products, emptyProduct()]);
-    setProducts(isAdmin ? nextProducts : [...products, emptyProduct()]);
+    setProducts([...products, emptyProduct()]);
     setFocusProductIndex(newIndex);
   }
 
   function removeProduct(index: number) {
-    const nextProducts = products.filter((_, i) => i !== index);
-    setProductsWithCustomCostSplit(nextProducts);
+    setProducts(products.filter((_, i) => i !== index));
   }
 
   function updateProduct(index: number, field: keyof ProductInput, value: string | number) {
@@ -244,7 +222,7 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
           }))
         ) !==
         JSON.stringify(
-          initialValues.costs.map((c) => ({
+          (initialValues.costs ?? []).map((c) => ({
             name: c.name.trim(),
             amount: parseFloat(String(c.amount)) || 0,
           }))
@@ -362,16 +340,11 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
           }
         : {}),
       products: products.map((p) => ({
+        ...(p.id ? { id: p.id } : {}),
         name: p.name,
-        unitCost: parseFloat(String(p.unitCost)),
         totalCartons: parseInt(String(p.totalCartons)),
         itemsPerCarton: parseInt(String(p.itemsPerCarton)),
-        ...(isAdmin
-          ? {
-              productCustomCost: parseFloat(String(p.productCustomCost)) || 0,
-              taxSeaFreight: parseFloat(String(p.taxSeaFreight)) || 0,
-            }
-          : {}),
+        ...(isAdmin ? { unitCost: parseFloat(String(p.unitCost)) } : {}),
       })),
     };
 
@@ -404,11 +377,11 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
       description={
         mode === "edit"
           ? isAdmin
-            ? "Update batch details"
-            : "Update batch and products — import credit is managed by the owner"
+            ? "Update batch details and product costs"
+            : "Update product names and quantities — costs are managed by the owner"
           : isAdmin
-            ? "Record a new import batch"
-            : "Add products, quantities, and unit costs — import credit is managed by the owner"
+            ? "Record a new import batch with final unit costs"
+            : "Add product names and quantities — costs are managed by the owner"
       }
       action={
         <Button type="button" variant="outline" onClick={handleBack}>
@@ -424,10 +397,9 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
         )}
 
         <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          {/* Batch */}
           <section className="border-b border-border px-5 py-4">
             <h2 className="text-sm font-semibold text-foreground mb-3">Batch</h2>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className={cn("grid gap-3", isAdmin ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
               <div className="space-y-1.5">
                 <Label className="text-xs">Batch number *</Label>
                 <Input
@@ -441,122 +413,125 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
                 <Label className="text-xs">Import date</Label>
                 <Input type="date" value={importDate} onChange={(e) => setImportDate(e.target.value)} />
               </div>
-              <div className="space-y-1.5 sm:col-span-1">
-                <Label className="text-xs">{isAdmin ? "Total value" : "Products value"}</Label>
-                <Input readOnly value={formatCurrency(previewTotal)} className="bg-muted font-semibold" />
-              </div>
+              {isAdmin && (
+                <div className="space-y-1.5 sm:col-span-1">
+                  <Label className="text-xs">Total value</Label>
+                  <Input readOnly value={formatCurrency(previewTotal)} className="bg-muted font-semibold" />
+                </div>
+              )}
             </div>
           </section>
 
           {isAdmin && (
-          <section className="border-b border-border px-5 py-4">
-            <div className="grid gap-6 md:grid-cols-2 md:gap-0">
-              <div className="md:pr-5 md:border-r md:border-border">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Extra costs</h2>
-                  <div className="flex items-center gap-2">
-                    {costsTotal > 0 && (
-                      <span className="text-xs font-medium text-primary">{formatCurrency(costsTotal)}</span>
-                    )}
-                    <Button type="button" variant="outline" size="sm" onClick={addCost}>
-                      <Plus className="h-3 w-3" /> Add
-                    </Button>
+            <section className="border-b border-border px-5 py-4">
+              <div className="grid gap-6 md:grid-cols-2 md:gap-0">
+                <div className="md:pr-5 md:border-r md:border-border">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold">Extra costs</h2>
+                    <div className="flex items-center gap-2">
+                      {costsTotal > 0 && (
+                        <span className="text-xs font-medium text-primary">{formatCurrency(costsTotal)}</span>
+                      )}
+                      <Button type="button" variant="outline" size="sm" onClick={addCost}>
+                        <Plus className="h-3 w-3" /> Add
+                      </Button>
+                    </div>
                   </div>
+                  {costs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Shipping, customs, handling — tracked for profit, not split per product.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {costs.map((cost, cIndex) => (
+                        <div key={cIndex} className="flex items-center gap-2">
+                          <Input
+                            list="import-cost-names"
+                            value={cost.name}
+                            onChange={(e) => updateCost(cIndex, "name", e.target.value)}
+                            placeholder="Pick existing or type new"
+                            className="flex-1"
+                          />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={cost.amount}
+                            onChange={(e) => updateCost(cIndex, "amount", e.target.value)}
+                            placeholder="0.00"
+                            className="w-28"
+                          />
+                          <Button type="button" variant="ghost" size="sm" onClick={() => removeCost(cIndex)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {costs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No shipping, customs, or handling costs added.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {costs.map((cost, cIndex) => (
-                      <div key={cIndex} className="flex items-center gap-2">
-                        <Input
-                          list="import-cost-names"
-                          value={cost.name}
-                          onChange={(e) => updateCost(cIndex, "name", e.target.value)}
-                          placeholder="Pick existing or type new"
-                          className="flex-1"
-                        />
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={cost.amount}
-                          onChange={(e) => updateCost(cIndex, "amount", e.target.value)}
-                          placeholder="0.00"
-                          className="w-28"
-                        />
-                        <Button type="button" variant="ghost" size="sm" onClick={() => removeCost(cIndex)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
-              <div className="md:pl-5">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Credit</h2>
-                  <div className="flex items-center gap-2">
-                    {creditTotal > 0 && (
-                      <span className="text-xs font-medium text-primary">{formatCurrency(creditTotal)}</span>
-                    )}
-                    <Button type="button" variant="outline" size="sm" onClick={addCreditPerson}>
-                      <Plus className="h-3 w-3" /> Add
-                    </Button>
+                <div className="md:pl-5">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold">Credit</h2>
+                    <div className="flex items-center gap-2">
+                      {creditTotal > 0 && (
+                        <span className="text-xs font-medium text-primary">{formatCurrency(creditTotal)}</span>
+                      )}
+                      <Button type="button" variant="outline" size="sm" onClick={addCreditPerson}>
+                        <Plus className="h-3 w-3" /> Add
+                      </Button>
+                    </div>
                   </div>
+                  {mode === "edit" && creditPaidAmount > 0 && (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      Paid so far:{" "}
+                      <span className="font-medium text-foreground">{formatCurrency(creditPaidAmount)}</span>
+                    </p>
+                  )}
+                  {creditPersons.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No credit entries added.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {creditPersons.map((person, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <Input
+                            list="import-credit-person-names"
+                            value={person.name}
+                            onChange={(e) => updateCreditPerson(index, "name", e.target.value)}
+                            placeholder="Pick existing or type new"
+                            className="flex-1"
+                          />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={person.amount}
+                            onChange={(e) => updateCreditPerson(index, "amount", e.target.value)}
+                            placeholder="0.00"
+                            className="w-28"
+                          />
+                          <Button type="button" variant="ghost" size="sm" onClick={() => removeCreditPerson(index)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {mode === "edit" && creditPaidAmount > 0 && (
-                  <p className="mb-2 text-xs text-muted-foreground">
-                    Paid so far:{" "}
-                    <span className="font-medium text-foreground">{formatCurrency(creditPaidAmount)}</span>
-                  </p>
-                )}
-                {creditPersons.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No credit entries added.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {creditPersons.map((person, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <Input
-                          list="import-credit-person-names"
-                          value={person.name}
-                          onChange={(e) => updateCreditPerson(index, "name", e.target.value)}
-                          placeholder="Pick existing or type new"
-                          className="flex-1"
-                        />
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={person.amount}
-                          onChange={(e) => updateCreditPerson(index, "amount", e.target.value)}
-                          placeholder="0.00"
-                          className="w-28"
-                        />
-                        <Button type="button" variant="ghost" size="sm" onClick={() => removeCreditPerson(index)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            </div>
-            <datalist id="import-cost-names">
-              {pastCostNames.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-            <datalist id="import-credit-person-names">
-              {pastCreditPersonNames.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </section>
+              <datalist id="import-cost-names">
+                {pastCostNames.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              <datalist id="import-credit-person-names">
+                {pastCreditPersonNames.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </section>
           )}
 
-          {/* Products */}
           <section className="border-b border-border px-5 py-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Products</h2>
@@ -571,50 +546,34 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
               <div className="space-y-2 overflow-x-auto">
                 <div className="hidden min-w-max gap-1.5 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:flex">
                   <span className="min-w-[120px] flex-1">Product</span>
-                  {isAdmin && (
-                    <>
-                      <span className="w-16 shrink-0">Custom</span>
-                      <span className="w-16 shrink-0">Tax/SF</span>
-                    </>
-                  )}
-                  <span className="w-24 shrink-0">Unit cost</span>
-                  <span className="w-24 shrink-0">Final/u</span>
+                  {isAdmin && <span className="w-28 shrink-0">Final unit cost</span>}
                   <span className="w-20 shrink-0">Cartons</span>
                   <span className="w-20 shrink-0">Items/ctn</span>
                   <span className="w-14 shrink-0 text-right">Items</span>
-                  <span className="w-20 shrink-0 text-right">Value</span>
+                  {isAdmin && <span className="w-20 shrink-0 text-right">Value</span>}
                   <span className="w-10 shrink-0" />
                 </div>
                 {products.map((product, pIndex) => {
                   const totalItems =
                     (Number(product.totalCartons) || 0) * (Number(product.itemsPerCarton) || 0);
-                  const lineValue = getProductLandedValue({
-                    unitCost: parseFloat(String(product.unitCost)) || 0,
-                    productCustomCost: parseFloat(String(product.productCustomCost)) || 0,
-                    taxSeaFreight: parseFloat(String(product.taxSeaFreight)) || 0,
-                    cartons: [
-                      {
-                        totalCartons: Number(product.totalCartons) || 0,
-                        itemsPerCarton: Number(product.itemsPerCarton) || 0,
-                      },
-                    ],
-                  });
-                  const finalUnitCost = getProductFinalUnitCost({
-                    unitCost: parseFloat(String(product.unitCost)) || 0,
-                    productCustomCost: parseFloat(String(product.productCustomCost)) || 0,
-                    taxSeaFreight: parseFloat(String(product.taxSeaFreight)) || 0,
-                    cartons: [
-                      {
-                        totalCartons: Number(product.totalCartons) || 0,
-                        itemsPerCarton: Number(product.itemsPerCarton) || 0,
-                      },
-                    ],
-                  });
+                  const lineValue = isAdmin
+                    ? getProductLandedValue({
+                        unitCost: parseFloat(String(product.unitCost)) || 0,
+                        cartons: [
+                          {
+                            totalCartons: Number(product.totalCartons) || 0,
+                            itemsPerCarton: Number(product.itemsPerCarton) || 0,
+                          },
+                        ],
+                      })
+                    : 0;
 
                   return (
                     <div
                       key={pIndex}
-                      ref={(el) => { productRefs.current[pIndex] = el; }}
+                      ref={(el) => {
+                        productRefs.current[pIndex] = el;
+                      }}
                       className="flex min-w-max flex-wrap items-center gap-2 sm:flex-nowrap"
                     >
                       <Input
@@ -627,48 +586,17 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
                         className="min-w-0 flex-1"
                       />
                       {isAdmin && (
-                        <>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={product.productCustomCost}
-                            onChange={(e) =>
-                              updateProduct(pIndex, "productCustomCost", e.target.value)
-                            }
-                            placeholder="0"
-                            title="Extra costs divided equally per product"
-                            className="h-9 w-full px-2 text-sm sm:w-16"
-                          />
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={product.taxSeaFreight}
-                            onChange={(e) => updateProduct(pIndex, "taxSeaFreight", e.target.value)}
-                            placeholder="0"
-                            title="Tax and sea-freight payment"
-                            className="h-9 w-full px-2 text-sm sm:w-16"
-                          />
-                        </>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={product.unitCost}
+                          onChange={(e) => updateProduct(pIndex, "unitCost", e.target.value)}
+                          placeholder="Final cost"
+                          required
+                          className="w-full sm:w-28"
+                        />
                       )}
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={product.unitCost}
-                        onChange={(e) => updateProduct(pIndex, "unitCost", e.target.value)}
-                        placeholder="Unit cost"
-                        required
-                        className="w-full sm:w-24"
-                      />
-                      <Input
-                        readOnly
-                        value={totalItems > 0 ? finalUnitCost.toFixed(2) : "—"}
-                        title="Unit cost + custom/items + tax/items"
-                        className="w-full bg-muted/60 text-sm sm:w-24"
-                        tabIndex={-1}
-                      />
                       <Input
                         type="number"
                         min="1"
@@ -690,9 +618,11 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
                       <span className="w-full text-right text-xs tabular-nums text-muted-foreground sm:w-14">
                         {totalItems || "—"}
                       </span>
-                      <span className="w-full text-right text-sm font-medium tabular-nums sm:w-20">
-                        {lineValue > 0 ? formatCurrency(lineValue) : "—"}
-                      </span>
+                      {isAdmin && (
+                        <span className="w-full text-right text-sm font-medium tabular-nums sm:w-20">
+                          {lineValue > 0 ? formatCurrency(lineValue) : "—"}
+                        </span>
+                      )}
                       {products.length > 1 ? (
                         <Button
                           type="button"
@@ -722,13 +652,20 @@ export function ImportForm({ user, mode, importId, initialValues }: ImportFormPr
           <div className="flex items-center justify-between gap-4 border-t border-border bg-muted/30 px-5 py-4">
             {isAdmin ? (
               <p className="text-sm text-muted-foreground">
+                Products: <span className="font-semibold text-foreground">{formatCurrency(productsTotal)}</span>
+                {costsTotal > 0 && (
+                  <>
+                    {" · "}
+                    Extra costs:{" "}
+                    <span className="font-semibold text-foreground">{formatCurrency(costsTotal)}</span>
+                  </>
+                )}
+                {" · "}
                 Total: <span className="font-bold text-foreground">{formatCurrency(previewTotal)}</span>
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Products total:{" "}
-                <span className="font-bold text-foreground">{formatCurrency(previewTotal)}</span>
-                <span className="block text-xs mt-0.5">Shipping, customs, and credit are added by the owner.</span>
+                {products.length} product{products.length !== 1 ? "s" : ""} listed
               </p>
             )}
             <div className="flex items-center gap-2">

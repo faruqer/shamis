@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
-import { isSalesperson, requireSalespersonShopId, shopCartonFilter } from "@/lib/shop-scope";
+import { isSalesperson, shopCartonFilter } from "@/lib/shop-scope";
 import { Role } from "@prisma/client";
 import { isWarehouseLocked } from "@/lib/settings";
 
@@ -52,7 +52,6 @@ export async function GET(request: Request) {
             ...carton,
             product: {
               name: product.name,
-              unitCost: location === "WAREHOUSE" ? product.unitCost : undefined,
               import: { importDate: product.import.importDate },
             },
           }))

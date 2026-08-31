@@ -45,7 +45,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       throw new Error("One or more selected credit persons were not found");
     }
 
-    let paymentTotal = 0;
     for (const person of selected) {
       const amount = parseAmount(person.amount);
       const paid = parseAmount(person.paidAmount);
@@ -53,7 +52,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       if (outstanding <= 0) {
         throw new Error(`${person.name} is already fully paid`);
       }
-      paymentTotal += outstanding;
     }
 
     const importRecord = await prisma.$transaction(async (tx) => {

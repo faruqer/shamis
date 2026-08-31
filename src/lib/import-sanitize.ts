@@ -21,7 +21,9 @@ type ImportRecord = {
 export function sanitizeImportForRole<T extends ImportRecord>(importRecord: T, role: Role): T {
   if (role === Role.ADMIN) return importRecord;
 
-  const { costs: _costs, creditPersons: _creditPersons, ...rest } = importRecord;
+  const rest = { ...importRecord };
+  delete rest.costs;
+  delete rest.creditPersons;
 
   return {
     ...rest,
@@ -31,10 +33,13 @@ export function sanitizeImportForRole<T extends ImportRecord>(importRecord: T, r
     creditPaid: false,
     costs: [],
     creditPersons: [],
-    products: (importRecord.products ?? []).map(
-      ({ productCustomCost: _productCustomCost, taxSeaFreight: _taxSeaFreight, ...product }) =>
-        product
-    ),
+    products: (importRecord.products ?? []).map((product) => {
+      const sanitized = { ...product };
+      delete sanitized.unitCost;
+      delete sanitized.productCustomCost;
+      delete sanitized.taxSeaFreight;
+      return sanitized;
+    }),
   } as T;
 }
 

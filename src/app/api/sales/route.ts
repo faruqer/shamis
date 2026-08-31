@@ -34,6 +34,7 @@ const saleSchema = z.discriminatedUnion("type", [
     type: z.literal("WHOLESALE"),
     clientId: z.string().optional(),
     clientName: z.string().optional(),
+    saleDate: z.string().optional(),
     items: z.array(wholesaleRetailItemSchema).min(1),
     paymentOption: z.enum(["PAID", "CREDIT", "PARTIAL"]),
     paidAmount: z.number().min(0).optional(),
@@ -50,6 +51,7 @@ const saleSchema = z.discriminatedUnion("type", [
     paidAmount: z.number().min(0).optional(),
     paymentMethod: paymentMethodSchema.optional(),
     bankAccountId: z.string().optional(),
+    saleDate: z.string().optional(),
   }),
 ]);
 
@@ -557,6 +559,10 @@ export async function POST(request: NextRequest) {
           totalAmount,
           paidAmount,
           paymentStatus,
+          saleDate:
+            (data.type === "WHOLESALE" || data.type === "RETAIL") && data.saleDate
+              ? new Date(data.saleDate)
+              : undefined,
           soldById: data.type === "WHOLESALE" ? salespersonId : undefined,
           retailSoldById: data.type === "RETAIL" ? session.id : undefined,
           items: { create: saleItems },

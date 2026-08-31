@@ -1,9 +1,7 @@
 import {
-  LedgerType,
   PaymentMethod,
   PaymentStatus,
   Prisma,
-  Role,
   SaleType,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -21,6 +19,7 @@ export type RetailSaleUpdateInput = {
   paidAmount?: number;
   paymentMethod?: PaymentMethod;
   bankAccountId?: string;
+  saleDate?: string;
   items: {
     cartonId: string;
     cartonsSold?: number;
@@ -231,6 +230,7 @@ export async function updateRetailSale(
         totalAmount,
         paidAmount,
         paymentStatus,
+        ...(data.saleDate ? { saleDate: new Date(data.saleDate) } : {}),
         items: { create: saleItems },
       },
       include: {

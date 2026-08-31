@@ -5,28 +5,19 @@ import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { Role } from "@prisma/client";
 import { sanitizeImportsForRole, sanitizeImportForRole } from "@/lib/import-sanitize";
+import { getImportProfitByImportId } from "@/lib/import-profit";
 
 const adminProductSchema = z.object({
   name: z.string().min(1),
-  unitCost: z.number().positive(),
+  unitCost: z.number().min(0),
   totalCartons: z.number().int().positive(),
   itemsPerCarton: z.number().int().positive(),
-  productCustomCost: z.number().min(0).optional(),
-  taxSeaFreight: z.number().min(0).optional(),
 });
-
-const productSchema = adminProductSchema;
 
 const salespersonProductSchema = z.object({
   name: z.string().min(1),
-  unitCost: z.number().positive(),
   totalCartons: z.number().int().positive(),
   itemsPerCarton: z.number().int().positive(),
-});
-
-const costSchema = z.object({
-  name: z.string().min(1),
-  amount: z.number().min(0),
 });
 
 const creditPersonSchema = z.object({
@@ -34,15 +25,18 @@ const creditPersonSchema = z.object({
   amount: z.number().positive(),
 });
 
+const costSchema = z.object({
+  name: z.string().min(1),
+  amount: z.number().min(0),
+});
+
 const importSchema = z.object({
   batchNumber: z.string().min(1),
   importDate: z.string().optional(),
   costs: z.array(costSchema).optional(),
-  onCredit: z.boolean().optional(),
-  creditAmount: z.number().min(0).optional(),
   creditPersons: z.array(creditPersonSchema).optional(),
   notes: z.string().optional(),
-  products: z.array(productSchema).min(1),
+  products: z.array(adminProductSchema).min(1),
 });
 
 const salespersonImportSchema = z.object({
@@ -64,13 +58,24 @@ function validateCreditPersons(creditPersons: { name: string; amount: number }[]
   }
 }
 
+function resolveCreditFields(data: z.infer<typeof importSchema>) {
+  const creditAmount = getCreditTotal(data.creditPersons);
+  return { creditAmount, creditPaidAmount: 0, creditPaid: false };
+}
+
 function getCostsTotal(costs: { amount: number }[] | undefined) {
   return costs?.reduce((sum, cost) => sum + cost.amount, 0) ?? 0;
 }
 
-function resolveCreditFields(data: z.infer<typeof importSchema>) {
-  const creditAmount = getCreditTotal(data.creditPersons);
-  return { creditAmount, creditPaidAmount: 0, creditPaid: false };
+function createCartonData(product: { totalCartons: number; itemsPerCarton: number }, index: number) {
+  return {
+    cartonNumber: String(index + 1),
+    itemsPerCarton: product.itemsPerCarton,
+    totalCartons: product.totalCartons,
+    remainingCartons: product.totalCartons,
+    remainingItems: product.totalCartons * product.itemsPerCarton,
+    location: "WAREHOUSE" as const,
+  };
 }
 
 export async function GET() {
@@ -89,7 +94,20 @@ export async function GET() {
       },
       orderBy: { importDate: "desc" },
     });
-    return jsonResponse(sanitizeImportsForRole(imports, session.role));
+
+    const sanitized = sanitizeImportsForRole(imports, session.role);
+
+    if (session.role === Role.ADMIN) {
+      const profitByImport = await getImportProfitByImportId();
+      return jsonResponse(
+        sanitized.map((imp) => ({
+          ...imp,
+          currentProfit: profitByImport.get(imp.id as string) ?? 0,
+        }))
+      );
+    }
+
+    return jsonResponse(sanitized);
   } catch (error) {
     return handleApiError(error);
   }
@@ -123,16 +141,11 @@ export async function POST(request: NextRequest) {
           products: {
             create: data.products.map((product, index) => ({
               name: product.name,
-              unitCost: product.unitCost,
+              unitCost: 0,
+              productCustomCost: 0,
+              taxSeaFreight: 0,
               cartons: {
-                create: {
-                  cartonNumber: String(index + 1),
-                  itemsPerCarton: product.itemsPerCarton,
-                  totalCartons: product.totalCartons,
-                  remainingCartons: product.totalCartons,
-                  remainingItems: product.totalCartons * product.itemsPerCarton,
-                  location: "WAREHOUSE",
-                },
+                create: createCartonData(product, index),
               },
             })),
           },
@@ -169,6 +182,9 @@ export async function POST(request: NextRequest) {
         creditPaid: credit.creditPaid,
         notes: data.notes,
         createdById: session.id,
+        costs: data.costs?.length
+          ? { create: data.costs.map((cost) => ({ name: cost.name.trim(), amount: cost.amount })) }
+          : undefined,
         creditPersons: data.creditPersons?.length
           ? {
               create: data.creditPersons.map((person) => ({
@@ -177,24 +193,14 @@ export async function POST(request: NextRequest) {
               })),
             }
           : undefined,
-        costs: data.costs?.length
-          ? { create: data.costs.map((cost) => ({ name: cost.name.trim(), amount: cost.amount })) }
-          : undefined,
         products: {
           create: data.products.map((product, index) => ({
             name: product.name,
             unitCost: product.unitCost,
-            productCustomCost: product.productCustomCost ?? 0,
-            taxSeaFreight: product.taxSeaFreight ?? 0,
+            productCustomCost: 0,
+            taxSeaFreight: 0,
             cartons: {
-              create: {
-                cartonNumber: String(index + 1),
-                itemsPerCarton: product.itemsPerCarton,
-                totalCartons: product.totalCartons,
-                remainingCartons: product.totalCartons,
-                remainingItems: product.totalCartons * product.itemsPerCarton,
-                location: "WAREHOUSE",
-              },
+              create: createCartonData(product, index),
             },
           })),
         },

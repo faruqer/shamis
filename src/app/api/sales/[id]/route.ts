@@ -13,6 +13,7 @@ const retailUpdateSchema = z.object({
   paidAmount: z.number().min(0).optional(),
   paymentMethod: paymentMethodSchema.optional(),
   bankAccountId: z.string().optional(),
+  saleDate: z.string().optional(),
   items: z
     .array(
       z.object({

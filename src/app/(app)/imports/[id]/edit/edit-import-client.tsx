@@ -41,22 +41,18 @@ export function EditImportClient({
               }))
             : [],
           products: data.products.map((product: {
+            id: string;
             name: string;
-            unitCost: string;
-            productCustomCost?: string;
-            taxSeaFreight?: string;
+            unitCost?: string;
             cartons: { totalCartons: number; itemsPerCarton: number }[];
           }) => {
             const carton = product.cartons[0];
             return {
+              id: product.id,
               name: product.name,
               unitCost: product.unitCost != null ? parseFloat(product.unitCost) || 0 : 0,
               totalCartons: carton?.totalCartons ?? 1,
               itemsPerCarton: carton?.itemsPerCarton ?? 12,
-              productCustomCost:
-                product.productCustomCost != null ? parseFloat(product.productCustomCost) || 0 : 0,
-              taxSeaFreight:
-                product.taxSeaFreight != null ? parseFloat(product.taxSeaFreight) || 0 : 0,
             };
           }),
         });

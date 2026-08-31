@@ -53,17 +53,14 @@ export function PayImportCreditModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const persons = importRecord.creditPersons ?? [];
-
-  const personsWithStatus = useMemo(
-    () =>
-      persons.map((person) => {
-        const paid = isPersonPaid(person, importRecord.creditPaid);
-        const outstanding = paid ? 0 : getPersonOutstanding(person);
-        return { ...person, paid, outstanding };
-      }),
-    [persons, importRecord.creditPaid]
-  );
+  const personsWithStatus = useMemo(() => {
+    const persons = importRecord.creditPersons ?? [];
+    return persons.map((person) => {
+      const paid = isPersonPaid(person, importRecord.creditPaid);
+      const outstanding = paid ? 0 : getPersonOutstanding(person);
+      return { ...person, paid, outstanding };
+    });
+  }, [importRecord.creditPersons, importRecord.creditPaid]);
 
   const pendingPersons = personsWithStatus.filter((person) => !person.paid);
   const totalOutstanding = pendingPersons.reduce((sum, person) => sum + person.outstanding, 0);

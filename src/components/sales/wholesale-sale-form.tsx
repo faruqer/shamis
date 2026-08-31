@@ -58,7 +58,6 @@ function lineTotal(item: SaleItemInput, carton?: InventoryCarton) {
 }
 
 export function WholesaleSaleForm({
-  user,
   mode = "page",
   initialCartonId,
   onSuccess,
@@ -74,6 +73,7 @@ export function WholesaleSaleForm({
   const [paidAmount, setPaidAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  const [saleDate, setSaleDate] = useState(new Date().toISOString().split("T")[0]);
   const [items, setItems] = useState<SaleItemInput[]>([
     { cartonId: initialCartonId ?? "", cartonsSold: 1, unitPrice: 0 },
   ]);
@@ -157,6 +157,7 @@ export function WholesaleSaleForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "WHOLESALE",
+          saleDate,
           clientId: clientId || undefined,
           clientName: !clientId ? clientInput.trim() : undefined,
           paymentOption,
@@ -201,6 +202,16 @@ export function WholesaleSaleForm({
               <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <User className="h-3.5 w-3.5" />
                 Client
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm">Sale date</Label>
+                <Input
+                  type="date"
+                  value={saleDate}
+                  onChange={(e) => setSaleDate(e.target.value)}
+                  required
+                />
               </div>
 
               <div className="space-y-2">
