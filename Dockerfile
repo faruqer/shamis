@@ -1,5 +1,5 @@
 FROM node:22-alpine AS base
-RUN apk add --no-cache libc6-compat openssl
+RUN apk add --no-cache libc6-compat openssl su-exec
 WORKDIR /app
 
 FROM base AS deps
@@ -44,9 +44,9 @@ COPY docker/seed-admin.mjs /app/docker/seed-admin.mjs
 
 RUN chmod +x /app/docker/entrypoint.sh \
   && mkdir -p /data \
-  && chown -R nextjs:nodejs /data /app/docker /app/prisma-cli
+  && chown nextjs:nodejs /data \
+  && chown nextjs:nodejs /app/docker/entrypoint.sh /app/docker/seed-admin.mjs
 
-USER nextjs
 EXPOSE 3000
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
