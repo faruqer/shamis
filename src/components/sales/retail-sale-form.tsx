@@ -8,7 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, parseStoredDate } from "@/lib/utils";
+import {
+  formatEthiopianDateInput,
+  getTodayEthiopianInputValue,
+  gregorianToEthiopian,
+} from "@/lib/ethiopian-calendar";
+import { EthiopianDateInput } from "@/components/ui/ethiopian-date-input";
 import { PaymentMethodFields } from "@/components/sales/payment-method-fields";
 import { parseInventoryResponse } from "@/lib/inventory-api";
 
@@ -128,12 +134,18 @@ export function RetailSaleForm({
   const [paidAmount, setPaidAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().split("T")[0]);
+  const [saleDateEthiopian, setSaleDateEthiopian] = useState(getTodayEthiopianInputValue());
   const [items, setItems] = useState<RetailItemInput[]>([
     { cartonId: initialCartonId ?? "", cartonsSold: "", itemsSold: "", unitPrice: "" },
   ]);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [focusItemIndex, setFocusItemIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!saleId) {
+      setSaleDateEthiopian(getTodayEthiopianInputValue());
+    }
+  }, [saleId, initialCartonId]);
 
   useEffect(() => {
     if (focusItemIndex === null) return;
@@ -160,7 +172,7 @@ export function RetailSaleForm({
       const clientsData = await clientsRes.json();
       if (cancelled) return;
 
-      setClients(clientsData);
+      setClients(Array.isArray(clientsData) ? clientsData : []);
 
       if (saleId) {
         setLoadingSale(true);
@@ -191,10 +203,9 @@ export function RetailSaleForm({
         setInventory(adjustedInventory);
         setClientInput(sale.client?.name ?? "");
         setClientId(sale.clientId ?? "");
-        setSaleDate(
-          sale.saleDate
-            ? new Date(sale.saleDate).toISOString().split("T")[0]
-            : new Date().toISOString().split("T")[0]
+        setSaleDateEthiopian(
+          sale.saleDateEthiopian ??
+            formatEthiopianDateInput(gregorianToEthiopian(parseStoredDate(sale.saleDate)))
         );
         setPaymentOption(sale.paymentStatus as PaymentOption);
         setPaidAmount(
@@ -344,7 +355,7 @@ export function RetailSaleForm({
       const payload = {
         clientId: clientId || undefined,
         clientName: !clientId ? clientInput.trim() : undefined,
-        saleDate,
+        saleDateEthiopian,
         paymentOption,
         paidAmount: paymentOption === "PARTIAL" ? parseFloat(paidAmount) || 0 : undefined,
         paymentMethod: showPaymentMethod ? paymentMethod : undefined,
@@ -522,15 +533,11 @@ export function RetailSaleForm({
                 <User className="h-3.5 w-3.5" />
                 Client
               </div>
-              <div className="space-y-2">
-                <Label className="text-sm">Sale date</Label>
-                <Input
-                  type="date"
-                  value={saleDate}
-                  onChange={(e) => setSaleDate(e.target.value)}
-                  required
-                />
-              </div>
+              <EthiopianDateInput
+                value={saleDateEthiopian}
+                onChange={setSaleDateEthiopian}
+                label="Sale date"
+              />
 
               <div className="space-y-2">
                 <Label className="text-sm">Client *</Label>

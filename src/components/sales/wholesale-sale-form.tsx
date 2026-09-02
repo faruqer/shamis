@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { Role } from "@prisma/client";
 import { cn, formatCurrency } from "@/lib/utils";
+import { getTodayEthiopianInputValue } from "@/lib/ethiopian-calendar";
+import { EthiopianDateInput } from "@/components/ui/ethiopian-date-input";
 import { parseInventoryResponse } from "@/lib/inventory-api";
 import { PaymentMethodFields } from "@/components/sales/payment-method-fields";
 
@@ -73,10 +75,14 @@ export function WholesaleSaleForm({
   const [paidAmount, setPaidAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().split("T")[0]);
+  const [saleDateEthiopian, setSaleDateEthiopian] = useState(getTodayEthiopianInputValue());
   const [items, setItems] = useState<SaleItemInput[]>([
     { cartonId: initialCartonId ?? "", cartonsSold: 1, unitPrice: 0 },
   ]);
+
+  useEffect(() => {
+    setSaleDateEthiopian(getTodayEthiopianInputValue());
+  }, [initialCartonId]);
 
   useEffect(() => {
     fetch("/api/inventory?location=WAREHOUSE")
@@ -157,7 +163,7 @@ export function WholesaleSaleForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "WHOLESALE",
-          saleDate,
+          saleDateEthiopian,
           clientId: clientId || undefined,
           clientName: !clientId ? clientInput.trim() : undefined,
           paymentOption,
@@ -204,15 +210,11 @@ export function WholesaleSaleForm({
                 Client
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-sm">Sale date</Label>
-                <Input
-                  type="date"
-                  value={saleDate}
-                  onChange={(e) => setSaleDate(e.target.value)}
-                  required
-                />
-              </div>
+              <EthiopianDateInput
+                value={saleDateEthiopian}
+                onChange={setSaleDateEthiopian}
+                label="Sale date"
+              />
 
               <div className="space-y-2">
                 <Label className="text-sm">Client *</Label>

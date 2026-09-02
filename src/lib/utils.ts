@@ -1,5 +1,10 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import {
+  formatEthiopianDateLong,
+  parseEthiopianDateInput,
+} from "@/lib/ethiopian-calendar";
+import { ensureSaleDateEthiopian } from "@/lib/sale-dates";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -15,23 +20,100 @@ export function formatCurrency(amount: number | string) {
 }
 
 export function formatDate(date: Date | string) {
+  return formatEthiopianDateLong(parseStoredDate(date));
+}
+
+export function formatGregorianDate(date: Date | string) {
   return new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
-  }).format(new Date(date));
+  }).format(parseStoredDate(date));
 }
 
 export function formatDateTime(date: Date | string) {
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
+  const stored = parseStoredDate(date);
+  const eth = formatEthiopianDateLong(stored);
+  const time = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
-    second: "2-digit",
     hour12: true,
-  }).format(new Date(date));
+  }).format(stored);
+  return `${eth} · ${time}`;
+}
+
+/** Format a stored Ethiopian date with the actual recorded time. */
+export function formatSaleDateTime(
+  saleDateEthiopian?: string | null,
+  createdAt?: Date | string,
+  saleDate?: Date | string
+) {
+  const storedSaleDate = saleDate ? parseStoredDate(saleDate) : undefined;
+  const storedCreatedAt = createdAt ? parseStoredDate(createdAt) : undefined;
+  const ethValue = saleDateEthiopian
+    ? saleDateEthiopian
+    : storedSaleDate
+      ? ensureSaleDateEthiopian(storedSaleDate)
+      : undefined;
+
+  const dateLabel = ethValue
+    ? formatEthiopianDateLong(parseEthiopianDateInput(ethValue))
+    : formatEthiopianDateLong(storedSaleDate ?? storedCreatedAt ?? new Date());
+
+  const timeSource = storedCreatedAt ?? storedSaleDate;
+  if (!timeSource) return dateLabel;
+
+  const time = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(timeSource);
+
+  return `${dateLabel} · ${time}`;
+}
+
+/** Local calendar date as YYYY-MM-DD for `<input type="date">`. */
+export function getLocalDateInputValue(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Parse YYYY-MM-DD as local midnight (not UTC). */
+export function parseLocalDateInput(value: string) {
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Normalize stored ISO timestamps and date strings for local display/filtering. */
+export function parseStoredDate(value: Date | string) {
+  if (value instanceof Date) return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return parseLocalDateInput(value);
+  }
+  return new Date(value);
+}
+
+export function startOfLocalDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export function endOfLocalDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+export function isDateInLocalRange(value: Date | string, start: Date, end: Date) {
+  const date = parseStoredDate(value);
+  return date >= start && date <= end;
+}
+
+export function formatEthiopianDate(date: Date | string) {
+  return formatEthiopianDateLong(parseStoredDate(date));
 }
 
 export function generateSaleNumber(prefix: string) {

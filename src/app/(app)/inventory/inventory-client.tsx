@@ -53,7 +53,7 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
   const [loading, setLoading] = useState(true);
   const [lockLoading, setLockLoading] = useState(false);
   const [staffTab, setStaffTab] = useState<"SHOP" | "WAREHOUSE">("SHOP");
-  const [filter, setFilter] = useState<"ALL" | "WAREHOUSE" | "SHOP">(isShopStaff ? "SHOP" : "ALL");
+  const [filter, setFilter] = useState<"ALL" | "WAREHOUSE" | "SHOP">(isShopStaff ? "SHOP" : "WAREHOUSE");
   const [shopFilter, setShopFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [selectedCarton, setSelectedCarton] = useState<CartonRecord | null>(null);

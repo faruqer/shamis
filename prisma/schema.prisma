@@ -203,6 +203,7 @@ model Sale {
   soldById        String?
   retailSoldById  String?
   saleDate        DateTime      @default(now())
+  saleDateEthiopian String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

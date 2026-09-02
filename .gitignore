@@ -45,6 +45,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# prisma / docker data
+# prisma data
 /prisma/*.db
 /data

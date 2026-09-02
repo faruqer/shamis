@@ -28,7 +28,12 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition";
 import { SaleType } from "@/components/sales/sale-form";
 import { getSaleProfit } from "@/lib/sale-utils";
-import { cn, formatCurrency, formatDate, formatDateTime, getSalePaymentMethods } from "@/lib/utils";
+import { cn, formatCurrency, formatSaleDateTime, getSalePaymentMethods, isDateInLocalRange, parseStoredDate, startOfLocalDay, endOfLocalDay } from "@/lib/utils";
+import {
+  getTodayEthiopianInputValue,
+} from "@/lib/ethiopian-calendar";
+import { ensureSaleDateEthiopian } from "@/lib/sale-dates";
+import { EthiopianDateInput } from "@/components/ui/ethiopian-date-input";
 import { Role } from "@prisma/client";
 
 interface SaleRecord {
@@ -39,6 +44,8 @@ interface SaleRecord {
   paidAmount: number | string;
   paymentStatus: string;
   saleDate: string;
+  saleDateEthiopian?: string;
+  createdAt: string;
   client?: { name: string };
   soldBy?: { name: string };
   retailSoldBy?: { name: string };
@@ -62,7 +69,7 @@ interface SaleRecord {
 
 type FilterType = "ALL" | SaleType;
 type PaymentFilter = "ALL" | "PAID" | "PARTIAL" | "CREDIT";
-type PeriodMode = "today" | "7d" | "30d" | "custom";
+type PeriodMode = "today" | "7d" | "30d" | "all" | "custom";
 
 const typeConfig: Record<
   SaleType,
@@ -73,60 +80,51 @@ const typeConfig: Record<
   RETAIL: { label: "Retail", variant: "success", icon: <Receipt className="h-3 w-3" /> },
 };
 
-const PERIOD_OPTIONS: { key: PeriodMode; label: string }[] = [
-  { key: "today", label: "Today" },
-  { key: "7d", label: "Last 7 Days" },
-  { key: "30d", label: "Last 30 Days" },
-];
-
-function startOfDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function toDateInputValue(date: Date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
 function parseAmount(value: number | string) {
   return typeof value === "number" ? value : parseFloat(value) || 0;
 }
 
-function getPeriodRange(mode: PeriodMode, customDate: string) {
-  const today = startOfDay(new Date());
-  const end = new Date(today);
-  end.setHours(23, 59, 59, 999);
+const PERIOD_OPTIONS: { key: PeriodMode; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "7d", label: "Last 7 Days" },
+  { key: "30d", label: "Last 30 Days" },
+  { key: "all", label: "All Time" },
+];
 
-  if (mode === "today") {
-    return { start: today, end, label: formatDate(today) };
-  }
-
-  if (mode === "custom") {
-    const [y, m, d] = customDate.split("-").map(Number);
-    const day = startOfDay(new Date(y, m - 1, d));
-    const dayEnd = new Date(day);
-    dayEnd.setHours(23, 59, 59, 999);
-    return { start: day, end: dayEnd, label: formatDate(day) };
-  }
-
+function getPeriodRange(mode: "7d" | "30d") {
+  const today = startOfLocalDay(new Date());
+  const end = endOfLocalDay(today);
   const days = mode === "7d" ? 7 : 30;
   const start = new Date(today);
   start.setDate(start.getDate() - (days - 1));
-  return {
-    start,
-    end,
-    label: `${formatDate(start)} – ${formatDate(today)}`,
-  };
+  return { start, end };
 }
 
-function isInPeriod(saleDate: string, mode: PeriodMode, customDate: string) {
-  const sale = new Date(saleDate);
-  const { start, end } = getPeriodRange(mode, customDate);
-  return sale >= start && sale <= end;
+function getSaleEthiopianDate(sale: SaleRecord) {
+  return ensureSaleDateEthiopian(parseStoredDate(sale.saleDate), sale.saleDateEthiopian);
+}
+
+function isInPeriod(sale: SaleRecord, mode: PeriodMode, customDate: string) {
+  if (mode === "all") return true;
+
+  if (mode === "today") {
+    return getSaleEthiopianDate(sale) === getTodayEthiopianInputValue();
+  }
+
+  if (mode === "custom") {
+    return getSaleEthiopianDate(sale) === customDate;
+  }
+
+  const { start, end } = getPeriodRange(mode);
+  return isDateInLocalRange(sale.saleDate, start, end);
+}
+
+function sortSalesRecentFirst<T extends { createdAt: string; saleDate: string }>(items: T[]) {
+  return [...items].sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() ||
+      new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime()
+  );
 }
 
 function formatItemQuantity(item: SaleRecord["items"][0]) {
@@ -166,12 +164,15 @@ export function SalesClient({
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("ALL");
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState<PeriodMode>("today");
-  const [customDate, setCustomDate] = useState(() => toDateInputValue(new Date()));
+  const [customDate, setCustomDate] = useState(() => getTodayEthiopianInputValue());
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState("");
+
   const loadSales = useCallback(() => {
     setLoading(true);
+    setLoadError("");
     fetch("/api/sales")
       .then(async (res) => {
         const data = await res.json();
@@ -186,9 +187,12 @@ export function SalesClient({
               : "Failed to load sales"
           );
         }
-        setSales(Array.isArray(data) ? data : []);
+        setSales(sortSalesRecentFirst(Array.isArray(data) ? data : []));
       })
-      .catch(() => setSales([]))
+      .catch((err) => {
+        setSales([]);
+        setLoadError(err instanceof Error ? err.message : "Failed to load sales");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -196,10 +200,8 @@ export function SalesClient({
     loadSales();
   }, [loadSales]);
 
-  const periodRange = useMemo(() => getPeriodRange(period, customDate), [period, customDate]);
-
   const periodSales = useMemo(
-    () => sales.filter((s) => isInPeriod(s.saleDate, period, customDate)),
+    () => sortSalesRecentFirst(sales.filter((s) => isInPeriod(s, period, customDate))),
     [sales, period, customDate]
   );
 
@@ -220,24 +222,26 @@ export function SalesClient({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return salesWithProfit.filter((s) => {
-      if (filter !== "ALL" && s.type !== filter) return false;
-      if (paymentFilter !== "ALL" && s.paymentStatus !== paymentFilter) return false;
-      if (!q) return true;
+    return sortSalesRecentFirst(
+      salesWithProfit.filter((s) => {
+        if (filter !== "ALL" && s.type !== filter) return false;
+        if (paymentFilter !== "ALL" && s.paymentStatus !== paymentFilter) return false;
+        if (!q) return true;
 
-      const haystack = [
-        s.saleNumber,
-        s.client?.name,
-        s.soldBy?.name,
-        s.retailSoldBy?.name,
-        ...s.items.map((i) => i.carton.product.name),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+        const haystack = [
+          s.saleNumber,
+          s.client?.name,
+          s.soldBy?.name,
+          s.retailSoldBy?.name,
+          ...s.items.map((i) => i.carton.product.name),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
 
-      return haystack.includes(q);
-    });
+        return haystack.includes(q);
+      })
+    );
   }, [salesWithProfit, filter, paymentFilter, search]);
 
   const report = useMemo(() => {
@@ -344,20 +348,17 @@ export function SalesClient({
                   {option.label}
                 </button>
               ))}
-              <Input
-                type="date"
+              <EthiopianDateInput
                 value={customDate}
-                onChange={(e) => {
-                  setCustomDate(e.target.value);
+                onChange={(value) => {
+                  setCustomDate(value);
                   setPeriod("custom");
                 }}
-                className={cn(
-                  "w-auto min-w-[160px]",
-                  period === "custom" && "ring-2 ring-primary/30 border-primary"
-                )}
+                label=""
+                hideSummary
+                className={cn(period === "custom" && "rounded-lg ring-2 ring-primary/30 p-2")}
               />
             </div>
-            <p className="text-xs text-muted-foreground">{periodRange.label}</p>
           </div>
 
           <div className="relative min-w-[240px] flex-1 lg:max-w-sm">
@@ -479,6 +480,12 @@ export function SalesClient({
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {loadError}
+        </div>
+      )}
+
       {loading ? (
         <LoadingSpinner />
       ) : filtered.length === 0 ? (
@@ -539,7 +546,7 @@ export function SalesClient({
                           {sale.client?.name || (sale.type === "SHOP_TRANSFER" ? "Internal transfer" : "No client")}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatDateTime(sale.saleDate)}
+                          {formatSaleDateTime(sale.saleDateEthiopian, sale.createdAt, sale.saleDate)}
                         </p>
                         {!isShopStaff && (sale.soldBy || sale.retailSoldBy) && (
                           <p className="text-xs text-muted-foreground mt-0.5">

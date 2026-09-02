@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { generateSaleNumber, decimalToNumber } from "@/lib/utils";
+import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
+import { buildSaleCreateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
 import { LedgerType, PaymentMethod, PaymentStatus, SaleType, Role } from "@prisma/client";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
 import { recordRetailCollection } from "@/lib/retail-ledger";
@@ -35,6 +37,7 @@ const saleSchema = z.discriminatedUnion("type", [
     clientId: z.string().optional(),
     clientName: z.string().optional(),
     saleDate: z.string().optional(),
+    saleDateEthiopian: z.string().optional(),
     items: z.array(wholesaleRetailItemSchema).min(1),
     paymentOption: z.enum(["PAID", "CREDIT", "PARTIAL"]),
     paidAmount: z.number().min(0).optional(),
@@ -52,6 +55,7 @@ const saleSchema = z.discriminatedUnion("type", [
     paymentMethod: paymentMethodSchema.optional(),
     bankAccountId: z.string().optional(),
     saleDate: z.string().optional(),
+    saleDateEthiopian: z.string().optional(),
   }),
 ]);
 
@@ -82,6 +86,10 @@ function serializeSaleListRecord(sale: SaleListRecord) {
     ...sale,
     totalAmount: decimalToNumber(sale.totalAmount),
     paidAmount: decimalToNumber(sale.paidAmount),
+    saleDateEthiopian: ensureSaleDateEthiopian(
+      sale.saleDate,
+      (sale as SaleListRecord & { saleDateEthiopian?: string | null }).saleDateEthiopian
+    ),
     items: sale.items.map((item) => ({
       ...item,
       unitPrice: decimalToNumber(item.unitPrice),
@@ -267,7 +275,7 @@ export async function GET(request: NextRequest) {
         },
         payments: { include: { bankAccount: { select: { name: true } } } },
       },
-      orderBy: { saleDate: "desc" },
+      orderBy: [{ createdAt: "desc" }, { saleDate: "desc" }],
     });
 
     if (isSalesperson(session)) {
@@ -374,16 +382,16 @@ export async function POST(request: NextRequest) {
         const transferShopId = salespersonShopId ?? data.shopId;
 
         const sale = await tx.sale.create({
-          data: {
+          data: buildSaleCreateData({
             saleNumber: generateSaleNumber(prefix),
             type: "SHOP_TRANSFER",
             shopId: transferShopId,
+            soldById: session.id,
             totalAmount,
             paidAmount: 0,
             paymentStatus: "CREDIT",
-            soldById: session.id,
-            items: { create: saleItems },
-          },
+            items: saleItems,
+          }),
           include: {
             items: { include: { carton: { include: { product: true } } } },
           },
@@ -550,8 +558,16 @@ export async function POST(request: NextRequest) {
         salespersonId = data.salespersonId || session.id;
       }
 
+      const saleDateFields =
+        data.type === "WHOLESALE" || data.type === "RETAIL"
+          ? resolveSaleDates({
+              saleDate: data.saleDate,
+              saleDateEthiopian: data.saleDateEthiopian,
+            })
+          : null;
+
       const sale = await tx.sale.create({
-        data: {
+        data: buildSaleCreateData({
           saleNumber: generateSaleNumber(prefix),
           type: data.type as SaleType,
           clientId,
@@ -559,19 +575,20 @@ export async function POST(request: NextRequest) {
           totalAmount,
           paidAmount,
           paymentStatus,
-          saleDate:
-            (data.type === "WHOLESALE" || data.type === "RETAIL") && data.saleDate
-              ? new Date(data.saleDate)
-              : undefined,
+          saleDate: saleDateFields?.saleDate,
           soldById: data.type === "WHOLESALE" ? salespersonId : undefined,
           retailSoldById: data.type === "RETAIL" ? session.id : undefined,
-          items: { create: saleItems },
-        },
+          items: saleItems,
+        }),
         include: {
           client: true,
           items: { include: { carton: { include: { product: true } } } },
         },
       });
+
+      if (saleDateFields?.saleDateEthiopian) {
+        await persistSaleDateEthiopian(tx, sale.id, saleDateFields.saleDateEthiopian);
+      }
 
       if (paidAmount > 0) {
         const bankAccountId = await resolveBankAccountId(

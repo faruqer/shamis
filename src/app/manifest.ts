@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Stock & Money",
     description:
       "Professional stock and money management system for imports, wholesale, and retail",
-    start_url: "/dashboard",
+    start_url: "/imports",
     scope: "/",
     display: "standalone",
     background_color: "#dce5df",

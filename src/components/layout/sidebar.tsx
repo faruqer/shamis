@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard,
@@ -16,6 +17,8 @@ import {
   BarChart3,
   Landmark,
   ArrowLeftRight,
+  ChevronDown,
+  MoreHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
@@ -32,6 +35,8 @@ interface NavItem {
   icon: React.ReactNode;
   roles?: Role[];
 }
+
+const PRIMARY_NAV_HREFS = new Set(["/imports", "/inventory", "/balance"]);
 
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" /> },
@@ -53,6 +58,52 @@ interface SidebarProps {
   user: { name: string; role: Role; email: string };
 }
 
+function getItemLabel(item: NavItem, role: Role) {
+  return item.href === "/inventory" && role === Role.SALESPERSON
+    ? "Shop Stock"
+    : item.label;
+}
+
+function isNavItemActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
+function NavLink({
+  item,
+  label,
+  isActive,
+  expanded,
+}: {
+  item: NavItem;
+  label: string;
+  isActive: boolean;
+  expanded: boolean;
+}) {
+  return (
+    <Link
+      href={item.href}
+      prefetch
+      title={!expanded ? label : undefined}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200",
+        isActive
+          ? "bg-white/20 text-white shadow-sm"
+          : "text-white/70 hover:bg-white/10 hover:text-white"
+      )}
+    >
+      <span className="shrink-0">{item.icon}</span>
+      <motion.span
+        initial={false}
+        animate={{ opacity: expanded ? 1 : 0, width: expanded ? "auto" : 0 }}
+        transition={{ duration: 0.2 }}
+        className="min-w-0 overflow-hidden whitespace-nowrap"
+      >
+        {label}
+      </motion.span>
+    </Link>
+  );
+}
+
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -67,6 +118,20 @@ export function Sidebar({ user }: SidebarProps) {
   const filteredItems = navItems.filter(
     (item) => !item.roles || item.roles.includes(user.role)
   );
+
+  const isAdmin = user.role === Role.ADMIN;
+  const primaryItems = isAdmin
+    ? filteredItems.filter((item) => PRIMARY_NAV_HREFS.has(item.href))
+    : filteredItems;
+  const moreItems = isAdmin
+    ? filteredItems.filter((item) => !PRIMARY_NAV_HREFS.has(item.href))
+    : [];
+
+  const isMoreSectionActive = moreItems.some((item) =>
+    isNavItemActive(pathname, item.href)
+  );
+
+  const [moreOpen, setMoreOpen] = useState(false);
 
   return (
     <motion.aside
@@ -95,38 +160,95 @@ export function Sidebar({ user }: SidebarProps) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-3">
-        {filteredItems.map((item) => {
-          const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-          const label =
-            item.href === "/inventory" && user.role === Role.SALESPERSON
-              ? "Shop Stock"
-              : item.label;
+        {primaryItems.map((item) => (
+          <NavLink
+            key={item.href}
+            item={item}
+            label={getItemLabel(item, user.role)}
+            isActive={isNavItemActive(pathname, item.href)}
+            expanded={expanded}
+          />
+        ))}
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              prefetch
-              title={!expanded ? label : undefined}
+        {moreItems.length > 0 && (
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (!expanded) {
+                  setExpanded(true);
+                }
+                setMoreOpen((open) => !open);
+              }}
+              title={!expanded ? "More" : undefined}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200",
-                isActive
+                "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200",
+                isMoreSectionActive
                   ? "bg-white/20 text-white shadow-sm"
                   : "text-white/70 hover:bg-white/10 hover:text-white"
               )}
             >
-              <span className="shrink-0">{item.icon}</span>
+              <span className="shrink-0">
+                <MoreHorizontal className="h-5 w-5" />
+              </span>
               <motion.span
                 initial={false}
                 animate={{ opacity: expanded ? 1 : 0, width: expanded ? "auto" : 0 }}
                 transition={{ duration: 0.2 }}
-                className="min-w-0 overflow-hidden whitespace-nowrap"
+                className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-left"
               >
-                {label}
+                More
               </motion.span>
-            </Link>
-          );
-        })}
+              <motion.span
+                initial={false}
+                animate={{
+                  opacity: expanded ? 1 : 0,
+                  width: expanded ? "auto" : 0,
+                  rotate: moreOpen ? 180 : 0,
+                }}
+                transition={{ duration: 0.2 }}
+                className="shrink-0 overflow-hidden"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </motion.span>
+            </button>
+
+            {moreOpen && (
+              <div className="space-y-1">
+                {moreItems.map((item) => {
+                  const label = getItemLabel(item, user.role);
+                  const isActive = isNavItemActive(pathname, item.href);
+
+                  return (
+                    <Link
+                      key={`${item.href}-${item.label}`}
+                      href={item.href}
+                      prefetch
+                      title={!expanded ? label : undefined}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg py-2.5 text-sm font-medium transition-colors duration-200",
+                        expanded ? "pl-6 pr-3" : "px-3",
+                        isActive
+                          ? "bg-white/20 text-white shadow-sm"
+                          : "text-white/70 hover:bg-white/10 hover:text-white"
+                      )}
+                    >
+                      <span className="shrink-0">{item.icon}</span>
+                      <motion.span
+                        initial={false}
+                        animate={{ opacity: expanded ? 1 : 0, width: expanded ? "auto" : 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="min-w-0 overflow-hidden whitespace-nowrap"
+                      >
+                        {label}
+                      </motion.span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       <div className="border-t border-white/10 p-3">

@@ -7,6 +7,8 @@ import {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { decimalToNumber } from "@/lib/utils";
+import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
+import { buildSaleUpdateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
 import type { SessionUser } from "@/lib/auth-edge";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
 import { recordRetailCollection } from "@/lib/retail-ledger";
@@ -21,6 +23,7 @@ export type RetailSaleUpdateInput = {
   paymentMethod?: PaymentMethod;
   bankAccountId?: string;
   saleDate?: string;
+  saleDateEthiopian?: string;
   items: {
     cartonId: string;
     cartonsSold?: number;
@@ -326,23 +329,30 @@ export async function updateRetailSale(
       paymentMethod = data.paymentMethod;
     }
 
+    const saleDateFields = resolveSaleDates({
+      saleDate: data.saleDate,
+      saleDateEthiopian: data.saleDateEthiopian,
+    });
+
     const updated = await tx.sale.update({
       where: { id: saleId },
-      data: {
+      data: buildSaleUpdateData({
         clientId,
         shopId: retailShopId,
         totalAmount,
         paidAmount,
         paymentStatus,
-        ...(data.saleDate ? { saleDate: new Date(data.saleDate) } : {}),
-        items: { create: saleItems },
-      },
+        saleDate: saleDateFields.saleDate,
+        items: saleItems,
+      }),
       include: {
         client: true,
         items: { include: { carton: { include: { product: true } } } },
         payments: { include: { bankAccount: { select: { name: true } } } },
       },
     });
+
+    await persistSaleDateEthiopian(tx, saleId, saleDateFields.saleDateEthiopian);
 
     if (paidAmount > 0) {
       const bankAccountId = await resolveBankAccountId(tx, paymentMethod, data.bankAccountId);
@@ -394,6 +404,7 @@ export async function getSaleById(session: SessionUser, saleId: string) {
   if (isSalesperson(session)) {
     return {
       ...sale,
+      saleDateEthiopian: ensureSaleDateEthiopian(sale.saleDate, sale.saleDateEthiopian),
       items: sale.items.map((item) => ({
         ...item,
         carton: {
@@ -405,5 +416,8 @@ export async function getSaleById(session: SessionUser, saleId: string) {
     };
   }
 
-  return sale;
+  return {
+    ...sale,
+    saleDateEthiopian: ensureSaleDateEthiopian(sale.saleDate, sale.saleDateEthiopian),
+  };
 }
