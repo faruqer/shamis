@@ -56,11 +56,6 @@ enum HawalaStatus {
   CONFIRMED
 }
 
-enum ChinaRmbEntryType {
-  CREDIT
-  DEBIT
-}
-
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -81,7 +76,7 @@ model User {
   hawalaReceivers    HawalaReceiver[]     @relation("HawalaReceivers")
   hawalaTransfers    HawalaTransfer[]     @relation("HawalaTransfersSent")
   hawalaConfirmations HawalaTransfer[]    @relation("HawalaConfirmations")
-  chinaRmbEntries    ChinaRmbEntry[]
+  chinaRmbCredits    ChinaRmbCredit[]
 }
 
 model Shop {
@@ -348,20 +343,35 @@ model HawalaTransfer {
   @@index([status])
 }
 
-model ChinaRmbEntry {
-  id          String            @id @default(cuid())
-  type        ChinaRmbEntryType
+model ChinaRmbPerson {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  credits ChinaRmbCredit[]
+
+  @@index([name])
+}
+
+model ChinaRmbCredit {
+  id          String   @id @default(cuid())
+  personId    String
   amount      Decimal
-  paidAmount  Decimal           @default(0)
-  description String
+  paidAmount  Decimal  @default(0)
+  description String?
   notes       String?
-  reference   String?
-  entryDate   DateTime          @default(now())
+  creditDate  DateTime @default(now())
   createdById String
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  createdBy User @relation(fields: [createdById], references: [id])
+  person    ChinaRmbPerson @relation(fields: [personId], references: [id], onDelete: Cascade)
+  createdBy User           @relation(fields: [createdById], references: [id])
 
-  @@index([entryDate])
+  @@index([personId])
+  @@index([creditDate])
 }
