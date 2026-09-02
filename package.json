@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:network": "next dev -H 0.0.0.0 -p 3000",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "start:network": "next start -H 0.0.0.0 -p 3000",
     "pwa:mobile": "npm run build && node scripts/pwa-mobile.mjs",

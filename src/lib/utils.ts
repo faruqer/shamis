@@ -19,6 +19,15 @@ export function formatCurrency(amount: number | string) {
   return `Br ${formatted}`;
 }
 
+export function formatRmb(amount: number | string) {
+  const value = typeof amount === "string" ? parseFloat(amount) : amount;
+  const formatted = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+  return `¥ ${formatted}`;
+}
+
 export function formatDate(date: Date | string) {
   return formatEthiopianDateLong(parseStoredDate(date));
 }

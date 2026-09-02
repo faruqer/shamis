@@ -19,6 +19,7 @@ import {
   ArrowLeftRight,
   ChevronDown,
   MoreHorizontal,
+  Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
@@ -45,6 +46,7 @@ const navItems: NavItem[] = [
   { href: "/sales", label: "Sales", icon: <Receipt className="h-5 w-5" /> },
   { href: "/expenses", label: "Expenses", icon: <Receipt className="h-5 w-5" /> },
   { href: "/balance", label: "Balance", icon: <Wallet className="h-5 w-5" />, roles: [Role.ADMIN] },
+  { href: "/china-rmb", label: "China RMB", icon: <Coins className="h-5 w-5" />, roles: [Role.ADMIN] },
   { href: "/banks", label: "Bank Accounts", icon: <Landmark className="h-5 w-5" />, roles: [Role.ADMIN] },
   { href: "/hawala", label: "hw", icon: <ArrowLeftRight className="h-5 w-5" /> },
   { href: "/report", label: "Report", icon: <BarChart3 className="h-5 w-5" />, roles: [Role.ADMIN] },

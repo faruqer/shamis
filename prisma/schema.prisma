@@ -56,6 +56,11 @@ enum HawalaStatus {
   CONFIRMED
 }
 
+enum ChinaRmbEntryType {
+  CREDIT
+  DEBIT
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -76,6 +81,7 @@ model User {
   hawalaReceivers    HawalaReceiver[]     @relation("HawalaReceivers")
   hawalaTransfers    HawalaTransfer[]     @relation("HawalaTransfersSent")
   hawalaConfirmations HawalaTransfer[]    @relation("HawalaConfirmations")
+  chinaRmbEntries    ChinaRmbEntry[]
 }
 
 model Shop {
@@ -340,4 +346,21 @@ model HawalaTransfer {
   @@index([salespersonId])
   @@index([receiverId])
   @@index([status])
+}
+
+model ChinaRmbEntry {
+  id          String            @id @default(cuid())
+  type        ChinaRmbEntryType
+  amount      Decimal
+  description String
+  notes       String?
+  reference   String?
+  entryDate   DateTime          @default(now())
+  createdById String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([entryDate])
 }
