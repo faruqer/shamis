@@ -7,11 +7,13 @@
     "dev:network": "next dev -H 0.0.0.0 -p 3000",
     "build": "prisma generate && next build",
     "start": "next start",
+    "start:prod": "prisma db push --skip-generate && next start -H 0.0.0.0 -p 3000",
     "start:network": "next start -H 0.0.0.0 -p 3000",
     "pwa:mobile": "npm run build && node scripts/pwa-mobile.mjs",
     "lint": "next lint",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
+    "db:deploy": "prisma db push --skip-generate",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:full": "tsx prisma/seed-full.ts",
     "db:seed:admin": "tsx prisma/seed-admin.ts",
@@ -35,7 +37,8 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.1.0",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "prisma": "^6.5.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
@@ -47,7 +50,6 @@
     "eslint": "^9.24.0",
     "eslint-config-next": "^15.2.4",
     "localtunnel": "^2.0.2",
-    "prisma": "^6.5.0",
     "tailwindcss": "^4.1.3",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"

@@ -27,3 +27,19 @@ export function computeChinaRmbTotals(
     { totalCredit: 0, totalDebit: 0 }
   );
 }
+
+export function computeChinaRmbOutstanding(
+  entries: { amount: Prisma.Decimal | number; paidAmount?: Prisma.Decimal | number | null }[]
+) {
+  return entries.reduce((sum, entry) => {
+    const amount = Number(entry.amount);
+    const paid = Number(entry.paidAmount ?? 0);
+    return sum + Math.max(0, amount - paid);
+  }, 0);
+}
+
+export function getChinaRmbPaymentStatus(amount: number, paidAmount: number) {
+  if (paidAmount <= 0) return "UNPAID" as const;
+  if (paidAmount >= amount - 0.001) return "PAID" as const;
+  return "PARTIAL" as const;
+}

@@ -10,6 +10,7 @@ import {
   Pencil,
   Trash2,
   Search,
+  CircleCheck,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -22,14 +23,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition";
 import { cn, formatDateTime, formatRmb } from "@/lib/utils";
+import { getChinaRmbPaymentStatus } from "@/lib/china-rmb";
 import { Role } from "@prisma/client";
 
 type EntryType = "CREDIT" | "DEBIT";
+type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
 
 interface ChinaRmbEntry {
   id: string;
   type: EntryType;
   amount: string;
+  paidAmount: string;
   description: string;
   notes?: string | null;
   reference?: string | null;
@@ -42,10 +46,11 @@ interface ChinaRmbData {
   balance: number;
   totalCredit: number;
   totalDebit: number;
+  totalOutstanding: number;
 }
 
-function parseAmount(value: string) {
-  const amount = parseFloat(value);
+function parseAmount(value: string | number) {
+  const amount = typeof value === "number" ? value : parseFloat(value);
   return Number.isFinite(amount) ? amount : 0;
 }
 
@@ -62,10 +67,14 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [paymentEntry, setPaymentEntry] = useState<ChinaRmbEntry | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   const [entryType, setEntryType] = useState<EntryType>("CREDIT");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [paidAmount, setPaidAmount] = useState("");
   const [entryDate, setEntryDate] = useState(() => toDatetimeLocalValue());
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -98,6 +107,7 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
         entry.notes,
         entry.type,
         formatRmb(entry.amount),
+        formatRmb(entry.paidAmount),
       ]
         .filter(Boolean)
         .join(" ")
@@ -111,9 +121,20 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
     setEntryType("CREDIT");
     setDescription("");
     setAmount("");
+    setPaidAmount("");
     setEntryDate(toDatetimeLocalValue());
     setReference("");
     setNotes("");
+  }
+
+  function openPaymentModal(entry: ChinaRmbEntry) {
+    setPaymentEntry(entry);
+    setPaymentAmount(String(parseAmount(entry.paidAmount)));
+  }
+
+  function closePaymentModal() {
+    setPaymentEntry(null);
+    setPaymentAmount("");
   }
 
   function openForm() {
@@ -126,6 +147,7 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
     setEntryType(entry.type);
     setDescription(entry.description);
     setAmount(String(parseAmount(entry.amount)));
+    setPaidAmount(String(parseAmount(entry.paidAmount)));
     setEntryDate(toDatetimeLocalValue(new Date(entry.entryDate)));
     setReference(entry.reference ?? "");
     setNotes(entry.notes ?? "");
@@ -141,10 +163,17 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
     e.preventDefault();
     setFormLoading(true);
     try {
+      const entryAmount = parseFloat(amount);
+      const entryPaidAmount = paidAmount.trim() === "" ? 0 : parseFloat(paidAmount);
+      if (entryPaidAmount > entryAmount + 0.001) {
+        throw new Error("Paid amount cannot exceed the entry amount");
+      }
+
       const body = {
         type: entryType,
         description,
-        amount: parseFloat(amount),
+        amount: entryAmount,
+        paidAmount: entryPaidAmount,
         entryDate,
         reference: reference || undefined,
         notes: notes || undefined,
@@ -193,6 +222,65 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
     }
   }
 
+  async function handlePaymentSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!paymentEntry) return;
+
+    setPaymentLoading(true);
+    try {
+      const totalAmount = parseAmount(paymentEntry.amount);
+      const nextPaidAmount = parseFloat(paymentAmount);
+      if (!Number.isFinite(nextPaidAmount) || nextPaidAmount < 0) {
+        throw new Error("Enter a valid paid amount");
+      }
+      if (nextPaidAmount > totalAmount + 0.001) {
+        throw new Error("Paid amount cannot exceed the entry amount");
+      }
+
+      const res = await fetch(`/api/china-rmb/${paymentEntry.id}/paid`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paidAmount: nextPaidAmount }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error || "Failed to update paid amount");
+      }
+
+      closePaymentModal();
+      loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to update paid amount");
+    } finally {
+      setPaymentLoading(false);
+    }
+  }
+
+  async function handleMarkFullyPaid(entry: ChinaRmbEntry) {
+    setActionLoadingId(entry.id);
+    try {
+      const res = await fetch(`/api/china-rmb/${entry.id}/paid`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paidAmount: parseAmount(entry.amount) }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Failed to mark as paid");
+      loadData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to mark as paid");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  function paymentStatusBadge(status: PaymentStatus) {
+    if (status === "PAID") return <Badge variant="success">Paid</Badge>;
+    if (status === "PARTIAL") return <Badge variant="warning">Partial</Badge>;
+    return <Badge variant="default">Unpaid</Badge>;
+  }
+
   const entryForm = (
     <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
       <div className="space-y-2 md:col-span-2">
@@ -223,6 +311,17 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
         />
       </div>
       <div className="space-y-2">
+        <Label>Paid Amount (RMB)</Label>
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          value={paidAmount}
+          onChange={(e) => setPaidAmount(e.target.value)}
+          placeholder="0"
+        />
+      </div>
+      <div className="space-y-2 md:col-span-2">
         <Label>Date &amp; Time *</Label>
         <Input
           type="datetime-local"
@@ -254,6 +353,49 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
     </form>
   );
 
+  const paymentForm = paymentEntry ? (
+    <form onSubmit={handlePaymentSubmit} className="grid gap-4">
+      <div className="rounded-lg bg-muted/60 px-3 py-2 text-sm">
+        <p className="font-medium">{paymentEntry.description}</p>
+        <p className="text-muted-foreground">
+          Total: {formatRmb(paymentEntry.amount)} · Already paid: {formatRmb(paymentEntry.paidAmount)}
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label>Paid amount (RMB) *</Label>
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          max={parseAmount(paymentEntry.amount)}
+          value={paymentAmount}
+          onChange={(e) => setPaymentAmount(e.target.value)}
+          required
+        />
+        <p className="text-xs text-muted-foreground">
+          Set how much has been paid for this entry. Remaining:{" "}
+          {formatRmb(Math.max(0, parseAmount(paymentEntry.amount) - parseFloat(paymentAmount || "0")))}
+        </p>
+      </div>
+      <div className="flex gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="flex-1"
+          onClick={() => setPaymentAmount(String(parseAmount(paymentEntry.amount)))}
+        >
+          Full amount
+        </Button>
+        <Button type="button" variant="outline" onClick={closePaymentModal} className="flex-1">
+          Cancel
+        </Button>
+        <Button type="submit" loading={paymentLoading} className="flex-1">
+          Save
+        </Button>
+      </div>
+    </form>
+  ) : null;
+
   return (
     <DashboardLayout
       user={user}
@@ -275,11 +417,21 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
         <div className="px-6 py-4">{entryForm}</div>
       </Modal>
 
+      <Modal
+        open={!!paymentEntry}
+        onClose={closePaymentModal}
+        title="Record Payment"
+        description="Mark how much has been paid on this entry"
+        className="max-w-md"
+      >
+        <div className="px-6 py-4">{paymentForm}</div>
+      </Modal>
+
       {loading ? (
         <LoadingSpinner />
       ) : (
         <>
-          <div className="mb-6 grid gap-3 sm:grid-cols-3">
+          <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               compact
               title="Current Balance"
@@ -300,6 +452,13 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
               value={formatRmb(data?.totalDebit ?? 0)}
               icon={<ArrowDownCircle className="h-4 w-4" />}
               delay={0.1}
+            />
+            <StatCard
+              compact
+              title="Unsettled"
+              value={formatRmb(data?.totalOutstanding ?? 0)}
+              icon={<CircleCheck className="h-4 w-4" />}
+              delay={0.15}
             />
           </div>
 
@@ -341,9 +500,11 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
                 <div className="space-y-2">
                   {filteredEntries.map((entry, index) => {
                     const isCredit = entry.type === "CREDIT";
-                    const signedAmount = isCredit
-                      ? parseAmount(entry.amount)
-                      : -parseAmount(entry.amount);
+                    const entryAmount = parseAmount(entry.amount);
+                    const entryPaidAmount = parseAmount(entry.paidAmount);
+                    const paymentStatus = getChinaRmbPaymentStatus(entryAmount, entryPaidAmount);
+                    const remaining = Math.max(0, entryAmount - entryPaidAmount);
+                    const isActionLoading = actionLoadingId === entry.id;
 
                     return (
                       <motion.div
@@ -351,7 +512,7 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.02 }}
-                        className="flex items-center justify-between gap-4 rounded-lg border border-border p-4"
+                        className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-center sm:justify-between"
                       >
                         <div className="flex min-w-0 items-center gap-3">
                           {isCredit ? (
@@ -368,10 +529,14 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
                             {entry.notes && (
                               <p className="mt-1 text-xs text-muted-foreground truncate">{entry.notes}</p>
                             )}
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Paid: {formatRmb(entryPaidAmount)} / {formatRmb(entryAmount)}
+                              {remaining > 0 && ` · Remaining: ${formatRmb(remaining)}`}
+                            </p>
                           </div>
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-3">
+                        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
                           <div className="text-right">
                             <p
                               className={cn(
@@ -380,17 +545,42 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
                               )}
                             >
                               {isCredit ? "+" : "-"}
-                              {formatRmb(Math.abs(signedAmount))}
+                              {formatRmb(entryAmount)}
                             </p>
-                            <Badge variant={isCredit ? "success" : "danger"}>{entry.type}</Badge>
+                            <div className="mt-1 flex flex-wrap justify-end gap-1">
+                              <Badge variant={isCredit ? "success" : "danger"}>{entry.type}</Badge>
+                              {paymentStatusBadge(paymentStatus)}
+                            </div>
                           </div>
-                          <div className="flex gap-1">
+
+                          <div className="flex flex-wrap gap-1">
+                            {paymentStatus !== "PAID" && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={isActionLoading}
+                                onClick={() => handleMarkFullyPaid(entry)}
+                              >
+                                <CircleCheck className="h-4 w-4" />
+                                <span className="hidden sm:inline">Mark paid</span>
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isActionLoading}
+                              onClick={() => openPaymentModal(entry)}
+                            >
+                              Paid
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => openEditForm(entry)}
-                              disabled={actionLoadingId === entry.id}
+                              disabled={isActionLoading}
                               aria-label="Edit entry"
                             >
                               <Pencil className="h-4 w-4" />
@@ -400,7 +590,7 @@ export function ChinaRmbClient({ user }: { user: { name: string; role: Role; ema
                               variant="ghost"
                               size="sm"
                               onClick={() => handleDelete(entry)}
-                              disabled={actionLoadingId === entry.id}
+                              disabled={isActionLoading}
                               aria-label="Delete entry"
                               className="text-destructive hover:text-destructive"
                             >

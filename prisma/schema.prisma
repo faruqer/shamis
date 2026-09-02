@@ -352,6 +352,7 @@ model ChinaRmbEntry {
   id          String            @id @default(cuid())
   type        ChinaRmbEntryType
   amount      Decimal
+  paidAmount  Decimal           @default(0)
   description String
   notes       String?
   reference   String?

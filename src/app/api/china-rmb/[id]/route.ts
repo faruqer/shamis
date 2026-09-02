@@ -8,11 +8,18 @@ import { jsonResponse, handleApiError } from "@/lib/api-utils";
 const entrySchema = z.object({
   type: z.nativeEnum(ChinaRmbEntryType),
   amount: z.number().positive(),
+  paidAmount: z.number().min(0).optional(),
   description: z.string().min(1),
   notes: z.string().optional(),
   reference: z.string().optional(),
   entryDate: z.string().optional(),
 });
+
+function validatePaidAmount(amount: number, paidAmount: number) {
+  if (paidAmount > amount + 0.001) {
+    throw new Error(`Paid amount cannot exceed ${amount}`);
+  }
+}
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -28,11 +35,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       throw new Error("Entry not found");
     }
 
+    const paidAmount = data.paidAmount ?? Number(existing.paidAmount);
+    validatePaidAmount(data.amount, paidAmount);
+
     const entry = await prisma.chinaRmbEntry.update({
       where: { id },
       data: {
         type: data.type,
         amount: data.amount,
+        paidAmount,
         description: data.description,
         notes: data.notes,
         reference: data.reference,
