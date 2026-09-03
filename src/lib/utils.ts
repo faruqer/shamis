@@ -69,7 +69,7 @@ export function formatSaleDateTime(
     ? formatEthiopianDateLong(parseEthiopianDateInput(ethValue))
     : formatEthiopianDateLong(storedSaleDate ?? storedCreatedAt ?? new Date());
 
-  const timeSource = storedCreatedAt ?? storedSaleDate;
+  const timeSource = storedSaleDate ?? storedCreatedAt;
   if (!timeSource) return dateLabel;
 
   const time = new Intl.DateTimeFormat("en-US", {
@@ -153,22 +153,32 @@ export function getSalePaymentMethods(
   payments:
     | {
         paymentMethod?: string | null;
+        amount?: string | number | { toString(): string } | null;
         bankAccount?: { name: string } | null;
       }[]
     | undefined
 ) {
   if (!payments?.length) return null;
-  const methods = [
-    ...new Set(
-      payments
-        .map((p) => {
-          if (p.paymentMethod === "BANK_TRANSFER" && p.bankAccount?.name) {
-            return `Bank Transfer (${p.bankAccount.name})`;
-          }
-          return formatPaymentMethod(p.paymentMethod);
-        })
-        .filter((label): label is string => Boolean(label))
-    ),
-  ];
-  return methods.length > 0 ? methods.join(", ") : null;
+  const labels = payments
+    .map((p) => {
+      const amountRaw = p.amount;
+      const amount =
+        typeof amountRaw === "number"
+          ? amountRaw
+          : amountRaw != null && typeof amountRaw === "object"
+            ? parseFloat(amountRaw.toString()) || 0
+            : parseFloat(String(amountRaw ?? "0")) || 0;
+      let method =
+        p.paymentMethod === "BANK_TRANSFER" && p.bankAccount?.name
+          ? `Bank Transfer (${p.bankAccount.name})`
+          : formatPaymentMethod(p.paymentMethod);
+      if (!method) return null;
+      if (payments.length > 1 && amount > 0) {
+        method = `${method} ${formatCurrency(amount)}`;
+      }
+      return method;
+    })
+    .filter((label): label is string => Boolean(label));
+
+  return labels.length > 0 ? [...new Set(labels)].join(", ") : null;
 }

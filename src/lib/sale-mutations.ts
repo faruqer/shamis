@@ -1,4 +1,5 @@
 import {
+  LedgerType,
   PaymentMethod,
   PaymentStatus,
   Prisma,
@@ -11,7 +12,8 @@ import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
 import { buildSaleUpdateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
 import type { SessionUser } from "@/lib/auth-edge";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
-import { recordRetailCollection } from "@/lib/retail-ledger";
+import { getShopSalesperson, transferStockToShop } from "@/lib/shop-stock";
+import { createSalePayments, normalizePaymentSplits } from "@/lib/sale-payments";
 
 type Tx = Prisma.TransactionClient;
 
@@ -22,6 +24,11 @@ export type RetailSaleUpdateInput = {
   paidAmount?: number;
   paymentMethod?: PaymentMethod;
   bankAccountId?: string;
+  paymentSplits?: {
+    paymentMethod: PaymentMethod;
+    amount: number;
+    bankAccountId?: string;
+  }[];
   saleDate?: string;
   saleDateEthiopian?: string;
   items: {
@@ -49,7 +56,7 @@ export function assertCanModifySale(
 ) {
   if (sale.type === SaleType.SHOP_TRANSFER) {
     if (session.role !== Role.ADMIN) {
-      throw new Error("Only admins can reverse shop transfers");
+      throw new Error("Only admins can modify shop transfers");
     }
     return;
   }
@@ -178,20 +185,6 @@ async function reverseShopTransferStock(
   }
 }
 
-async function resolveBankAccountId(
-  tx: Tx,
-  paymentMethod: PaymentMethod | undefined,
-  bankAccountId: string | undefined
-) {
-  if (paymentMethod !== "BANK_TRANSFER") return null;
-  if (!bankAccountId) throw new Error("Select a bank for bank transfer");
-  const bank = await tx.bankAccount.findFirst({
-    where: { id: bankAccountId, isActive: true },
-  });
-  if (!bank) throw new Error("Invalid or inactive bank selected");
-  return bank.id;
-}
-
 function getPaymentStatus(total: number, paid: number): PaymentStatus {
   if (paid >= total) return "PAID";
   if (paid > 0) return "PARTIAL";
@@ -311,7 +304,6 @@ export async function updateRetailSale(
 
     let paidAmount = 0;
     let paymentStatus: PaymentStatus;
-    let paymentMethod: PaymentMethod | undefined;
 
     if (data.paymentOption === "PAID") {
       paidAmount = totalAmount;
@@ -324,10 +316,11 @@ export async function updateRetailSale(
       paymentStatus = getPaymentStatus(totalAmount, paidAmount);
     }
 
-    if (paidAmount > 0) {
-      if (!data.paymentMethod) throw new Error("Payment method is required when payment is made");
-      paymentMethod = data.paymentMethod;
-    }
+    const paymentSplits = normalizePaymentSplits(paidAmount, {
+      paymentMethod: data.paymentMethod,
+      bankAccountId: data.bankAccountId,
+      paymentSplits: data.paymentSplits,
+    });
 
     const saleDateFields = resolveSaleDates({
       saleDate: data.saleDate,
@@ -354,29 +347,124 @@ export async function updateRetailSale(
 
     await persistSaleDateEthiopian(tx, saleId, saleDateFields.saleDateEthiopian);
 
-    if (paidAmount > 0) {
-      const bankAccountId = await resolveBankAccountId(tx, paymentMethod, data.bankAccountId);
-      const payment = await tx.payment.create({
-        data: {
-          saleId: updated.id,
-          amount: paidAmount,
-          paymentMethod,
-          bankAccountId,
-          collectedById: session.id,
-        },
+    if (paymentSplits.length > 0) {
+      await createSalePayments(tx, {
+        saleId: updated.id,
+        saleNumber: updated.saleNumber,
+        saleType: SaleType.RETAIL,
+        splits: paymentSplits,
+        collectedById: session.id,
+        retailShopId,
+      });
+    }
+
+    return updated;
+  });
+}
+
+export type ShopTransferUpdateInput = {
+  shopId: string;
+  saleDate?: string;
+  saleDateEthiopian?: string;
+  saleTime?: string;
+  items: {
+    cartonId: string;
+    cartonsSold: number;
+    warehouseLeavingPrice: number;
+    retailUnitPrice: number;
+  }[];
+};
+
+export async function updateShopTransfer(
+  session: SessionUser,
+  saleId: string,
+  data: ShopTransferUpdateInput
+) {
+  const sale = await getSaleForModify(saleId);
+  if (!sale) throw new Error("Sale not found");
+  if (sale.type !== SaleType.SHOP_TRANSFER) {
+    throw new Error("Only shop transfers can be edited");
+  }
+  assertCanModifySale(session, sale);
+
+  return prisma.$transaction(async (tx) => {
+    await reverseShopTransferStock(tx, sale);
+    await clearSaleFinancials(tx, saleId);
+    await tx.saleItem.deleteMany({ where: { saleId } });
+
+    let totalAmount = 0;
+    const saleItems: {
+      cartonId: string;
+      cartonsSold: number;
+      itemsSold: number;
+      unitPrice: number;
+      totalPrice: number;
+    }[] = [];
+
+    for (const item of data.items) {
+      const carton = await tx.carton.findUnique({
+        where: { id: item.cartonId },
+        include: { product: true },
+      });
+      if (!carton) throw new Error(`Carton not found: ${item.cartonId}`);
+      if (carton.location !== "WAREHOUSE") {
+        throw new Error("Shop transfers can only be made from warehouse inventory");
+      }
+
+      const itemsMoved = item.cartonsSold * carton.itemsPerCarton;
+      const itemTotal = itemsMoved * item.warehouseLeavingPrice;
+      totalAmount += itemTotal;
+
+      saleItems.push({
+        cartonId: item.cartonId,
+        cartonsSold: item.cartonsSold,
+        itemsSold: itemsMoved,
+        unitPrice: item.warehouseLeavingPrice,
+        totalPrice: itemTotal,
       });
 
-      if (retailShopId) {
-        await recordRetailCollection(
-          tx,
-          retailShopId,
-          updated.id,
-          payment.id,
-          paidAmount,
-          updated.saleNumber
-        );
-      }
+      await transferStockToShop(
+        tx,
+        carton,
+        data.shopId,
+        item.cartonsSold,
+        item.warehouseLeavingPrice,
+        item.retailUnitPrice
+      );
     }
+
+    const saleDateFields = resolveSaleDates({
+      saleDate: data.saleDate,
+      saleDateEthiopian: data.saleDateEthiopian,
+      saleTime: data.saleTime,
+    });
+
+    const updated = await tx.sale.update({
+      where: { id: saleId },
+      data: {
+        shop: { connect: { id: data.shopId } },
+        totalAmount,
+        saleDate: saleDateFields.saleDate,
+        items: { create: saleItems },
+      },
+      include: {
+        shop: { select: { id: true, name: true } },
+        items: { include: { carton: { include: { product: true } } } },
+      },
+    });
+
+    await persistSaleDateEthiopian(tx, saleId, saleDateFields.saleDateEthiopian);
+
+    const shopSalesperson = await getShopSalesperson(tx, data.shopId);
+    await tx.salespersonLedger.create({
+      data: {
+        userId: shopSalesperson.id,
+        type: LedgerType.ADJUSTMENT,
+        amount: totalAmount,
+        description: `Wholesale stock credit ${updated.saleNumber}`,
+        saleId: updated.id,
+      },
+    });
 
     return updated;
   });
@@ -387,6 +475,7 @@ export async function getSaleById(session: SessionUser, saleId: string) {
     where: { id: saleId },
     include: {
       client: true,
+      shop: { select: { id: true, name: true } },
       soldBy: { select: { name: true } },
       retailSoldBy: { select: { name: true } },
       items: {

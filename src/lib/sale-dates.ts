@@ -10,6 +10,7 @@ import { endOfLocalDay, parseLocalDateInput, startOfLocalDay } from "@/lib/utils
 export type SaleDateInput = {
   saleDate?: string;
   saleDateEthiopian?: string;
+  saleTime?: string;
 };
 
 function applyCurrentTimeToDate(dateOnly: Date, timeSource = new Date()) {
@@ -23,6 +24,16 @@ function applyCurrentTimeToDate(dateOnly: Date, timeSource = new Date()) {
   return result;
 }
 
+function applyTimeToDate(dateOnly: Date, saleTime: string | undefined, fallback = new Date()) {
+  if (saleTime && /^\d{1,2}:\d{2}$/.test(saleTime)) {
+    const [hours, minutes] = saleTime.split(":").map(Number);
+    const result = startOfLocalDay(dateOnly);
+    result.setHours(hours, minutes, 0, 0);
+    return result;
+  }
+  return applyCurrentTimeToDate(dateOnly, fallback);
+}
+
 export function resolveSaleDates(input: SaleDateInput) {
   const now = new Date();
 
@@ -30,7 +41,7 @@ export function resolveSaleDates(input: SaleDateInput) {
     const eth = parseEthiopianDateInput(input.saleDateEthiopian);
     const greg = ethiopianToGregorian(eth);
     return {
-      saleDate: applyCurrentTimeToDate(greg, now),
+      saleDate: applyTimeToDate(greg, input.saleTime, now),
       saleDateEthiopian: formatEthiopianDateInput(eth),
     };
   }
@@ -38,7 +49,7 @@ export function resolveSaleDates(input: SaleDateInput) {
   if (input.saleDate) {
     const greg = parseLocalDateInput(input.saleDate);
     return {
-      saleDate: applyCurrentTimeToDate(greg, now),
+      saleDate: applyTimeToDate(greg, input.saleTime, now),
       saleDateEthiopian: formatEthiopianDateInput(gregorianToEthiopian(greg)),
     };
   }
@@ -47,6 +58,12 @@ export function resolveSaleDates(input: SaleDateInput) {
     saleDate: now,
     saleDateEthiopian: getTodayEthiopianInputValue(),
   };
+}
+
+export function getSaleTimeInputValue(date: Date | string) {
+  const parsed = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "12:00";
+  return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
 }
 
 export function ensureSaleDateEthiopian(

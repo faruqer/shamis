@@ -23,6 +23,7 @@ export function SaleForm(props: SaleFormProps) {
       <ShopTransferForm
         mode={props.mode}
         initialCartonId={props.initialCartonId}
+        saleId={props.saleId}
         fixedShopId={props.user.role === Role.SALESPERSON ? props.user.shopId ?? undefined : undefined}
         fixedShopName={
           props.user.role === Role.SALESPERSON

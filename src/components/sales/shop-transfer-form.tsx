@@ -5,9 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, parseStoredDate } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
 import { parseInventoryResponse } from "@/lib/inventory-api";
+import { getTodayEthiopianInputValue } from "@/lib/ethiopian-calendar";
+import { getSaleTimeInputValue } from "@/lib/sale-dates";
+import { EthiopianDateInput } from "@/components/ui/ethiopian-date-input";
+import { formatEthiopianDateInput, gregorianToEthiopian } from "@/lib/ethiopian-calendar";
 
 interface InventoryCarton {
   id: string;
@@ -23,6 +27,7 @@ interface ShopTransferFormProps {
   initialCartonId?: string;
   fixedShopId?: string;
   fixedShopName?: string;
+  saleId?: string;
   onSuccess?: () => void;
   onCancel?: () => void;
 }
@@ -32,10 +37,12 @@ export function ShopTransferForm({
   initialCartonId,
   fixedShopId,
   fixedShopName,
+  saleId,
   onSuccess,
   onCancel,
 }: ShopTransferFormProps) {
   const [loading, setLoading] = useState(false);
+  const [loadingSale, setLoadingSale] = useState(Boolean(saleId));
   const [error, setError] = useState("");
   const [inventory, setInventory] = useState<InventoryCarton[]>([]);
   const [shops, setShops] = useState<{ id: string; name: string }[]>([]);
@@ -44,35 +51,107 @@ export function ShopTransferForm({
   const [cartonsToTransfer, setCartonsToTransfer] = useState(1);
   const [warehouseLeavingPrice, setWarehouseLeavingPrice] = useState("");
   const [retailUnitPrice, setRetailUnitPrice] = useState("");
+  const [saleDateEthiopian, setSaleDateEthiopian] = useState(getTodayEthiopianInputValue());
+  const [saleTime, setSaleTime] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  });
 
   const selected = inventory.find((c) => c.id === cartonId);
 
   useEffect(() => {
-    if (fixedShopId) {
-      setShopId(fixedShopId);
-    } else {
-      fetch("/api/shops")
-        .then((r) => r.json())
-        .then((data: { id: string; name: string; isActive: boolean }[]) => {
-          const active = data.filter((s) => s.isActive !== false);
+    let cancelled = false;
+
+    async function loadFormData() {
+      if (!fixedShopId) {
+        const shopsRes = await fetch("/api/shops");
+        const shopsData = await shopsRes.json();
+        if (!cancelled) {
+          const active = shopsData.filter((s: { isActive: boolean }) => s.isActive !== false);
           setShops(active);
-          if (active.length === 1) setShopId(active[0].id);
+          if (!saleId && active.length === 1) setShopId(active[0].id);
+        }
+      } else {
+        setShopId(fixedShopId);
+      }
+
+      const [warehouseRes, shopRes] = await Promise.all([
+        fetch("/api/inventory?location=WAREHOUSE"),
+        fetch("/api/inventory?location=SHOP"),
+      ]);
+      const warehouseData = parseInventoryResponse<InventoryCarton>(await warehouseRes.json());
+      const shopData = parseInventoryResponse<{
+        product: { name: string };
+        retailUnitPrice?: string | null;
+        shop?: { id: string };
+      }>(await shopRes.json());
+      if (cancelled) return;
+
+      if (saleId) {
+        setLoadingSale(true);
+        const saleRes = await fetch(`/api/sales/${saleId}`);
+        const sale = await saleRes.json();
+        if (cancelled) return;
+        if (!saleRes.ok) {
+          setError(sale.error || "Failed to load transfer");
+          setLoadingSale(false);
+          return;
+        }
+
+        const saleItem = sale.items[0];
+        const adjustedInventory = warehouseData.map((carton) => {
+          if (!saleItem || saleItem.cartonId !== carton.id) return carton;
+          const itemsMoved =
+            saleItem.itemsSold || saleItem.cartonsSold * carton.itemsPerCarton;
+          return {
+            ...carton,
+            remainingCartons: carton.remainingCartons + saleItem.cartonsSold,
+            remainingItems: carton.remainingItems + itemsMoved,
+          };
         });
+
+        setInventory(adjustedInventory);
+        setShopId(sale.shopId ?? sale.shop?.id ?? "");
+        setCartonId(saleItem?.cartonId ?? "");
+        setCartonsToTransfer(saleItem?.cartonsSold ?? 1);
+        setWarehouseLeavingPrice(String(parseFloat(saleItem?.unitPrice) || ""));
+
+        const warehouseCarton = warehouseData.find((c) => c.id === saleItem?.cartonId);
+        const shopCarton = shopData.find(
+          (c: { product: { name: string }; shop?: { id: string }; retailUnitPrice?: string | null }) =>
+            c.product.name === warehouseCarton?.product.name &&
+            c.shop?.id === (sale.shopId ?? sale.shop?.id)
+        );
+        setRetailUnitPrice(
+          String(
+            parseFloat(shopCarton?.retailUnitPrice ?? "") ||
+              parseFloat(saleItem?.unitPrice) ||
+              warehouseCarton?.product.unitCost ||
+              ""
+          )
+        );
+
+        setSaleDateEthiopian(
+          sale.saleDateEthiopian ??
+            formatEthiopianDateInput(gregorianToEthiopian(parseStoredDate(sale.saleDate)))
+        );
+        setSaleTime(getSaleTimeInputValue(sale.saleDate));
+        setLoadingSale(false);
+        return;
+      }
+
+      setInventory(warehouseData);
+      if (initialCartonId) {
+        const carton = warehouseData.find((c) => c.id === initialCartonId);
+        if (carton) applyCartonDefaults(carton, initialCartonId);
+      }
     }
 
-    fetch("/api/inventory?location=WAREHOUSE")
-      .then((r) => r.json())
-      .then((data) => {
-        const items = parseInventoryResponse<InventoryCarton>(data);
-        setInventory(items);
-        if (initialCartonId) {
-          const carton = items.find((c: InventoryCarton) => c.id === initialCartonId);
-          if (carton) {
-            applyCartonDefaults(carton, initialCartonId);
-          }
-        }
-      });
-  }, [initialCartonId, fixedShopId]);
+    loadFormData();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialCartonId, fixedShopId, saleId]);
 
   function applyCartonDefaults(carton: InventoryCarton, id: string) {
     setCartonId(id);
@@ -105,32 +184,55 @@ export function ShopTransferForm({
       if (leavingPrice <= 0) throw new Error("Wholesale price is required");
       if (retailPrice <= 0) throw new Error("Retail price is required");
 
-      const res = await fetch("/api/sales", {
-        method: "POST",
+      const payload = {
+        shopId: destinationShopId,
+        saleDateEthiopian,
+        saleTime,
+        items: [
+          {
+            cartonId,
+            cartonsSold: cartonsToTransfer,
+            warehouseLeavingPrice: leavingPrice,
+            retailUnitPrice: retailPrice,
+          },
+        ],
+      };
+
+      const res = await fetch(saleId ? `/api/sales/${saleId}` : "/api/sales", {
+        method: saleId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "SHOP_TRANSFER",
-          shopId: destinationShopId,
-          items: [
-            {
-              cartonId,
-              cartonsSold: cartonsToTransfer,
-              warehouseLeavingPrice: leavingPrice,
-              retailUnitPrice: retailPrice,
-            },
-          ],
-        }),
+        body: JSON.stringify(saleId ? payload : { type: "SHOP_TRANSFER", ...payload }),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to transfer");
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to ${saleId ? "update" : "create"} transfer`);
+      }
 
       onSuccess?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to transfer");
+      setError(
+        err instanceof Error ? err.message : `Failed to ${saleId ? "update" : "create"} transfer`
+      );
     } finally {
       setLoading(false);
     }
+  }
+
+  if (loadingSale) {
+    const loadingContent = (
+      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+        Loading transfer...
+      </div>
+    );
+    if (mode === "modal") {
+      return (
+        <Modal open onClose={() => onCancel?.()} title="Edit Shop Transfer" className="max-w-lg">
+          <div className="px-6 py-4">{loadingContent}</div>
+        </Modal>
+      );
+    }
+    return loadingContent;
   }
 
   const formContent = (
@@ -138,6 +240,25 @@ export function ShopTransferForm({
       {error && (
         <div className="rounded-lg bg-[#e8d0d0]/80 border border-[#c9a8a8] p-3 text-sm text-[#7a3a3a]">{error}</div>
       )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <EthiopianDateInput
+          value={saleDateEthiopian}
+          onChange={setSaleDateEthiopian}
+          label="Transfer Date *"
+        />
+        <div className="space-y-2">
+          <Label htmlFor="transfer-time">Time *</Label>
+          <Input
+            id="transfer-time"
+            type="time"
+            value={saleTime}
+            onChange={(e) => setSaleTime(e.target.value)}
+            required
+          />
+          <p className="text-xs text-muted-foreground">Set a past date/time to record older transfers</p>
+        </div>
+      </div>
 
       <div className="space-y-2">
         <Label>Destination Shop *</Label>
@@ -158,7 +279,7 @@ export function ShopTransferForm({
         )}
       </div>
 
-      {!initialCartonId && (
+      {!initialCartonId && !saleId && (
         <div className="space-y-2">
           <Label>Product *</Label>
           <select
@@ -240,7 +361,7 @@ export function ShopTransferForm({
           </Button>
         )}
         <Button type="submit" loading={loading} className={onCancel ? "flex-1" : "w-full"} size="lg">
-          Complete Transfer
+          {saleId ? "Save Changes" : "Complete Transfer"}
         </Button>
       </div>
     </form>
@@ -248,7 +369,12 @@ export function ShopTransferForm({
 
   if (mode === "modal") {
     return (
-      <Modal open onClose={() => onCancel?.()} title="Transfer to Shop" className="max-w-lg">
+      <Modal
+        open
+        onClose={() => onCancel?.()}
+        title={saleId ? "Edit Shop Transfer" : "Transfer to Shop"}
+        className="max-w-lg"
+      >
         <div className="px-6 py-4">{formContent}</div>
       </Modal>
     );

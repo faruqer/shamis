@@ -6,12 +6,18 @@ import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { generateSaleNumber, decimalToNumber } from "@/lib/utils";
 import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
 import { buildSaleCreateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
-import { LedgerType, PaymentMethod, PaymentStatus, SaleType, Role } from "@prisma/client";
+import { LedgerType, PaymentStatus, SaleType, Role } from "@prisma/client";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
-import { recordRetailCollection } from "@/lib/retail-ledger";
 import { getShopSalesperson, transferStockToShop } from "@/lib/shop-stock";
+import { createSalePayments, normalizePaymentSplits } from "@/lib/sale-payments";
 
 const paymentMethodSchema = z.enum(["CASH", "BANK_TRANSFER", "MOBILE_MONEY", "CHECK", "OTHER"]);
+
+const paymentSplitSchema = z.object({
+  paymentMethod: paymentMethodSchema,
+  amount: z.number().positive(),
+  bankAccountId: z.string().optional(),
+});
 
 const wholesaleRetailItemSchema = z.object({
   cartonId: z.string(),
@@ -31,6 +37,9 @@ const saleSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("SHOP_TRANSFER"),
     shopId: z.string(),
+    saleDate: z.string().optional(),
+    saleDateEthiopian: z.string().optional(),
+    saleTime: z.string().optional(),
     items: z.array(shopTransferItemSchema).min(1),
   }),
   z.object({
@@ -44,6 +53,7 @@ const saleSchema = z.discriminatedUnion("type", [
     paidAmount: z.number().min(0).optional(),
     paymentMethod: paymentMethodSchema.optional(),
     bankAccountId: z.string().optional(),
+    paymentSplits: z.array(paymentSplitSchema).optional(),
     salespersonId: z.string().optional(),
   }),
   z.object({
@@ -55,6 +65,7 @@ const saleSchema = z.discriminatedUnion("type", [
     paidAmount: z.number().min(0).optional(),
     paymentMethod: paymentMethodSchema.optional(),
     bankAccountId: z.string().optional(),
+    paymentSplits: z.array(paymentSplitSchema).optional(),
     saleDate: z.string().optional(),
     saleDateEthiopian: z.string().optional(),
   }),
@@ -62,8 +73,8 @@ const saleSchema = z.discriminatedUnion("type", [
 
 type SaleListRecord = Awaited<ReturnType<typeof prisma.sale.findMany>>[number] & {
   client?: { name: string } | null;
-  soldBy?: { name: string } | null;
-  retailSoldBy?: { name: string } | null;
+  soldBy?: { id: string; name: string } | null;
+  retailSoldBy?: { id: string; name: string } | null;
   items: {
     cartonsSold: number;
     itemsSold: number;
@@ -117,20 +128,6 @@ function serializeSaleListRecord(sale: SaleListRecord) {
   };
 }
 
-async function resolveBankAccountId(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  paymentMethod: PaymentMethod | undefined,
-  bankAccountId: string | undefined
-) {
-  if (paymentMethod !== "BANK_TRANSFER") return null;
-  if (!bankAccountId) throw new Error("Select a bank for bank transfer");
-  const bank = await tx.bankAccount.findFirst({
-    where: { id: bankAccountId, isActive: true },
-  });
-  if (!bank) throw new Error("Invalid or inactive bank selected");
-  return bank.id;
-}
-
 function getPaymentStatus(total: number, paid: number): PaymentStatus {
   if (paid >= total) return "PAID";
   if (paid > 0) return "PARTIAL";
@@ -160,8 +157,8 @@ export async function GET(request: NextRequest) {
       where: Object.keys(where).length > 0 ? where : undefined,
       include: {
         client: true,
-        soldBy: { select: { name: true } },
-        retailSoldBy: { select: { name: true } },
+        soldBy: { select: { id: true, name: true } },
+        retailSoldBy: { select: { id: true, name: true } },
         items: {
           include: {
             carton: {
@@ -276,6 +273,11 @@ export async function POST(request: NextRequest) {
         }
 
         const transferShopId = salespersonShopId ?? data.shopId;
+        const transferDateFields = resolveSaleDates({
+          saleDate: data.saleDate,
+          saleDateEthiopian: data.saleDateEthiopian,
+          saleTime: data.saleTime,
+        });
 
         const sale = await tx.sale.create({
           data: buildSaleCreateData({
@@ -286,12 +288,19 @@ export async function POST(request: NextRequest) {
             totalAmount,
             paidAmount: 0,
             paymentStatus: "CREDIT",
+            saleDate: transferDateFields.saleDate,
             items: saleItems,
           }),
           include: {
             items: { include: { carton: { include: { product: true } } } },
           },
         });
+
+        await persistSaleDateEthiopian(
+          tx,
+          sale.id,
+          transferDateFields.saleDateEthiopian
+        );
 
         const shopSalesperson = await getShopSalesperson(tx, transferShopId);
 
@@ -426,7 +435,6 @@ export async function POST(request: NextRequest) {
 
       let paidAmount = 0;
       let paymentStatus: PaymentStatus;
-      let paymentMethod: PaymentMethod | undefined;
 
       if (data.type === "WHOLESALE" || data.type === "RETAIL") {
         if (data.paymentOption === "PAID") {
@@ -439,11 +447,6 @@ export async function POST(request: NextRequest) {
           paidAmount = data.paidAmount ?? 0;
           paymentStatus = getPaymentStatus(totalAmount, paidAmount);
         }
-
-        if (paidAmount > 0) {
-          if (!data.paymentMethod) throw new Error("Payment method is required when payment is made");
-          paymentMethod = data.paymentMethod;
-        }
       } else {
         paidAmount = 0;
         paymentStatus = "PAID";
@@ -453,6 +456,15 @@ export async function POST(request: NextRequest) {
       if (data.type === "WHOLESALE") {
         salespersonId = data.salespersonId || session.id;
       }
+
+      const paymentSplits =
+        data.type === "WHOLESALE" || data.type === "RETAIL"
+          ? normalizePaymentSplits(paidAmount, {
+              paymentMethod: data.paymentMethod,
+              bankAccountId: data.bankAccountId,
+              paymentSplits: data.paymentSplits,
+            })
+          : [];
 
       const saleDateFields =
         data.type === "WHOLESALE" || data.type === "RETAIL"
@@ -486,46 +498,16 @@ export async function POST(request: NextRequest) {
         await persistSaleDateEthiopian(tx, sale.id, saleDateFields.saleDateEthiopian);
       }
 
-      if (paidAmount > 0) {
-        const bankAccountId = await resolveBankAccountId(
-          tx,
-          paymentMethod,
-          data.type === "WHOLESALE" || data.type === "RETAIL" ? data.bankAccountId : undefined
-        );
-
-        const payment = await tx.payment.create({
-          data: {
-            saleId: sale.id,
-            amount: paidAmount,
-            paymentMethod,
-            bankAccountId,
-            collectedById: data.type === "RETAIL" ? session.id : salespersonId,
-          },
+      if (paymentSplits.length > 0) {
+        await createSalePayments(tx, {
+          saleId: sale.id,
+          saleNumber: sale.saleNumber,
+          saleType: data.type as SaleType,
+          splits: paymentSplits,
+          collectedById: data.type === "RETAIL" ? session.id : salespersonId,
+          retailShopId: data.type === "RETAIL" ? retailShopId : undefined,
+          wholesaleSalespersonId: data.type === "WHOLESALE" ? salespersonId : undefined,
         });
-
-        if (data.type === "WHOLESALE") {
-          await tx.salespersonLedger.create({
-            data: {
-              userId: salespersonId,
-              type: LedgerType.COLLECTION,
-              amount: paidAmount,
-              description: `Wholesale payment for sale ${sale.saleNumber}`,
-              saleId: sale.id,
-              paymentId: payment.id,
-            },
-          });
-        }
-
-        if (data.type === "RETAIL" && retailShopId) {
-          await recordRetailCollection(
-            tx,
-            retailShopId,
-            sale.id,
-            payment.id,
-            paidAmount,
-            sale.saleNumber
-          );
-        }
       }
 
       return sale;

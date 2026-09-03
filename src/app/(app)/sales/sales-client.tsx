@@ -47,8 +47,8 @@ interface SaleRecord {
   saleDateEthiopian?: string;
   createdAt: string;
   client?: { name: string };
-  soldBy?: { name: string };
-  retailSoldBy?: { name: string };
+  soldBy?: { id: string; name: string };
+  retailSoldBy?: { id: string; name: string };
   payments?: {
     paymentMethod?: string | null;
     amount?: string;
@@ -165,8 +165,10 @@ export function SalesClient({
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState<PeriodMode>("today");
   const [customDate, setCustomDate] = useState(() => getTodayEthiopianInputValue());
-  const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [editingSale, setEditingSale] = useState<{ id: string; type: SaleType } | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [salespersonFilter, setSalespersonFilter] = useState("ALL");
+  const [staffOptions, setStaffOptions] = useState<{ id: string; name: string }[]>([]);
 
   const [loadError, setLoadError] = useState("");
 
@@ -200,10 +202,45 @@ export function SalesClient({
     loadSales();
   }, [loadSales]);
 
+  useEffect(() => {
+    if (isShopStaff) return;
+    fetch("/api/users")
+      .then((r) => r.json())
+      .then((data: { id: string; name: string; isActive?: boolean }[]) => {
+        setStaffOptions(
+          data
+            .filter((user) => user.isActive !== false)
+            .map((user) => ({ id: user.id, name: user.name }))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      })
+      .catch(() => setStaffOptions([]));
+  }, [isShopStaff]);
+
+  function getSaleStaffId(sale: SaleRecord) {
+    if (sale.type === "RETAIL") return sale.retailSoldBy?.id;
+    return sale.soldBy?.id;
+  }
+
   const periodSales = useMemo(
     () => sortSalesRecentFirst(sales.filter((s) => isInPeriod(s, period, customDate))),
     [sales, period, customDate]
   );
+
+  const showStaffFilter =
+    !isShopStaff && (filter === "ALL" || filter === "RETAIL" || filter === "SHOP_TRANSFER");
+
+  const staffFilterOptions = useMemo(() => {
+    const idsInView = new Set<string>();
+    for (const sale of periodSales) {
+      if (filter !== "ALL" && sale.type !== filter) continue;
+      if (sale.type !== "RETAIL" && sale.type !== "SHOP_TRANSFER" && filter === "ALL") continue;
+      if (filter === "ALL" && sale.type === "WHOLESALE") continue;
+      const staffId = getSaleStaffId(sale);
+      if (staffId) idsInView.add(staffId);
+    }
+    return staffOptions.filter((staff) => idsInView.has(staff.id));
+  }, [periodSales, filter, staffOptions]);
 
   const salesWithProfit = useMemo(
     () =>
@@ -226,6 +263,13 @@ export function SalesClient({
       salesWithProfit.filter((s) => {
         if (filter !== "ALL" && s.type !== filter) return false;
         if (paymentFilter !== "ALL" && s.paymentStatus !== paymentFilter) return false;
+        if (salespersonFilter !== "ALL") {
+          if (s.type === "RETAIL" || s.type === "SHOP_TRANSFER") {
+            if (getSaleStaffId(s) !== salespersonFilter) return false;
+          } else if (filter === "RETAIL" || filter === "SHOP_TRANSFER") {
+            return false;
+          }
+        }
         if (!q) return true;
 
         const haystack = [
@@ -242,7 +286,7 @@ export function SalesClient({
         return haystack.includes(q);
       })
     );
-  }, [salesWithProfit, filter, paymentFilter, search]);
+  }, [salesWithProfit, filter, paymentFilter, search, salespersonFilter]);
 
   const report = useMemo(() => {
     const revenueSales = periodSales.filter((s) => s.type !== "SHOP_TRANSFER");
@@ -449,6 +493,23 @@ export function SalesClient({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
+            {showStaffFilter && staffFilterOptions.length > 0 && (
+              <>
+                <Label className="text-sm text-muted-foreground shrink-0">Staff:</Label>
+                <Select
+                  value={salespersonFilter}
+                  onChange={(e) => setSalespersonFilter(e.target.value)}
+                  className="w-auto min-w-[160px]"
+                >
+                  <option value="ALL">All staff</option>
+                  {staffFilterOptions.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.name}
+                    </option>
+                  ))}
+                </Select>
+              </>
+            )}
             <Label className="text-sm text-muted-foreground shrink-0">Payment:</Label>
             <Select
               value={paymentFilter}
@@ -460,13 +521,14 @@ export function SalesClient({
               <option value="PARTIAL">Partial</option>
               <option value="CREDIT">Credit</option>
             </Select>
-            {(search || filter !== "ALL" || paymentFilter !== "ALL") && (
+            {(search || filter !== "ALL" || paymentFilter !== "ALL" || salespersonFilter !== "ALL") && (
               <button
                 type="button"
                 onClick={() => {
                   setSearch("");
                   setFilter("ALL");
                   setPaymentFilter("ALL");
+                  setSalespersonFilter("ALL");
                 }}
                 className="text-xs text-primary hover:underline"
               >
@@ -570,14 +632,14 @@ export function SalesClient({
 
                       {showModifyActions && (
                         <div className="col-start-2 row-start-1 flex gap-1 justify-self-end self-start">
-                          {sale.type === "RETAIL" && (
+                          {(sale.type === "RETAIL" || sale.type === "SHOP_TRANSFER") && (
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               disabled={isActionLoading}
-                              onClick={() => setEditingSaleId(sale.id)}
-                              aria-label="Edit sale"
+                              onClick={() => setEditingSale({ id: sale.id, type: sale.type })}
+                              aria-label={sale.type === "SHOP_TRANSFER" ? "Edit transfer" : "Edit sale"}
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
@@ -652,17 +714,17 @@ export function SalesClient({
         </div>
       )}
 
-      {editingSaleId && (
+      {editingSale && (
         <SaleForm
           user={user}
-          type="RETAIL"
+          type={editingSale.type}
           mode="modal"
-          saleId={editingSaleId}
+          saleId={editingSale.id}
           onSuccess={() => {
-            setEditingSaleId(null);
+            setEditingSale(null);
             loadSales();
           }}
-          onCancel={() => setEditingSaleId(null)}
+          onCancel={() => setEditingSale(null)}
         />
       )}
     </DashboardLayout>

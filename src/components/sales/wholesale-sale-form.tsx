@@ -13,7 +13,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { getTodayEthiopianInputValue } from "@/lib/ethiopian-calendar";
 import { EthiopianDateInput } from "@/components/ui/ethiopian-date-input";
 import { parseInventoryResponse } from "@/lib/inventory-api";
-import { PaymentMethodFields } from "@/components/sales/payment-method-fields";
+import { PaymentMethodFields, buildPaymentPayload } from "@/components/sales/payment-method-fields";
 
 interface InventoryCarton {
   id: string;
@@ -75,6 +75,8 @@ export function WholesaleSaleForm({
   const [paidAmount, setPaidAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  const [cashAmount, setCashAmount] = useState("");
+  const [bankAmount, setBankAmount] = useState("");
   const [saleDateEthiopian, setSaleDateEthiopian] = useState(getTodayEthiopianInputValue());
   const [items, setItems] = useState<SaleItemInput[]>([
     { cartonId: initialCartonId ?? "", cartonsSold: 1, unitPrice: 0 },
@@ -154,9 +156,24 @@ export function WholesaleSaleForm({
       if (showPaymentMethod && !paymentMethod) {
         throw new Error("Payment method is required");
       }
-      if (showPaymentMethod && paymentMethod === "BANK_TRANSFER" && !bankAccountId) {
-        throw new Error("Select a bank for bank transfer");
-      }
+
+      const amountPaidNow =
+        paymentOption === "PAID"
+          ? totalAmount
+          : paymentOption === "PARTIAL"
+            ? parseFloat(paidAmount) || 0
+            : 0;
+
+      const paymentFields =
+        showPaymentMethod && amountPaidNow > 0
+          ? buildPaymentPayload({
+              paymentMethod,
+              paidAmount: amountPaidNow,
+              bankAccountId,
+              cashAmount,
+              bankAmount,
+            })
+          : {};
 
       const res = await fetch("/api/sales", {
         method: "POST",
@@ -168,9 +185,7 @@ export function WholesaleSaleForm({
           clientName: !clientId ? clientInput.trim() : undefined,
           paymentOption,
           paidAmount: paymentOption === "PARTIAL" ? parseFloat(paidAmount) || 0 : undefined,
-          paymentMethod: showPaymentMethod ? paymentMethod : undefined,
-          bankAccountId:
-            showPaymentMethod && paymentMethod === "BANK_TRANSFER" ? bankAccountId : undefined,
+          ...paymentFields,
           items: items.map((item) => ({
             cartonId: item.cartonId,
             cartonsSold: item.cartonsSold,
@@ -306,6 +321,17 @@ export function WholesaleSaleForm({
                       onPaymentMethodChange={setPaymentMethod}
                       bankAccountId={bankAccountId}
                       onBankAccountChange={setBankAccountId}
+                      cashAmount={cashAmount}
+                      onCashAmountChange={setCashAmount}
+                      bankAmount={bankAmount}
+                      onBankAmountChange={setBankAmount}
+                      expectedTotal={
+                        paymentOption === "PAID"
+                          ? totalAmount
+                          : paymentOption === "PARTIAL"
+                            ? parseFloat(paidAmount) || 0
+                            : undefined
+                      }
                     />
                   )}
                 </div>
