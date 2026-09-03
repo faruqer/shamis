@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition";
 import { StockActionModal, StockActionType } from "@/components/inventory/stock-action-modal";
+import { ShopReturnForm } from "@/components/inventory/shop-return-form";
 import { SaleForm } from "@/components/sales/sale-form";
 import { formatCurrency } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
@@ -213,11 +214,10 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
   }, [inventory, filter, shopFilter, search, isShopStaff, isAdmin]);
 
   function handleCardClick(carton: CartonRecord) {
-    if (isAdmin && carton.location === "SHOP") return;
     if (warehouseLockedForStaff && carton.location === "WAREHOUSE") return;
     setSelectedCarton(carton);
-    if (isShopStaff && carton.location === "SHOP") {
-      setSaleType("RETAIL");
+    if (carton.location === "SHOP") {
+      setShowActionModal(true);
       return;
     }
     setShowActionModal(true);
@@ -476,14 +476,11 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
                   <button
                     type="button"
                     onClick={() => handleCardClick(carton)}
-                    disabled={
-                      (isAdmin && !isWarehouse) ||
-                      (warehouseLockedForStaff && isWarehouse)
-                    }
+                    disabled={warehouseLockedForStaff && isWarehouse}
                     className={cn(
                       "relative w-full overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all duration-200",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      (isAdmin && !isWarehouse) || (warehouseLockedForStaff && isWarehouse)
+                      warehouseLockedForStaff && isWarehouse
                         ? "cursor-default border-l-4 border-l-primary border-border"
                         : "hover:shadow-md hover:shadow-primary/10",
                       isWarehouse
@@ -581,17 +578,13 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
                         </div>
                       </div>
 
-                      {!isAdmin || isWarehouse ? (
+                      {!warehouseLockedForStaff || !isWarehouse ? (
                         warehouseLockedForStaff && isWarehouse ? null : (
                           <p className="mt-2 text-center text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                            {isShopStaff && isShopStock ? "Click to log sale →" : "Click to move stock →"}
+                            {isShopStock ? "Click to manage stock →" : "Click to move stock →"}
                           </p>
                         )
-                      ) : (
-                        <p className="mt-2 text-center text-xs text-muted-foreground">
-                          Shop stock
-                        </p>
-                      )}
+                      ) : null}
                     </div>
                   </button>
                 </div>
@@ -614,6 +607,7 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
               : " in warehouse"
             : ` of ${warehouseCount + shopCount}`}
           {!isShopStaff && " · Click warehouse stock to sell wholesale or transfer"}
+          {isShopStaff && staffTab === "SHOP" && " · Click shop stock to sell or return to warehouse"}
         </motion.div>
       )}
 
@@ -637,12 +631,25 @@ export function InventoryClient({ user }: { user: InventoryUser }) {
         userRole={user.role}
       />
 
-      {saleType && selectedCarton && (
+      {saleType && selectedCarton && saleType !== "RETURN_TO_WAREHOUSE" && (
         <SaleForm
           user={user}
           type={saleType}
           mode="modal"
           initialCartonId={selectedCarton.id}
+          onSuccess={handleSaleComplete}
+          onCancel={handleCloseAll}
+        />
+      )}
+
+      {saleType === "RETURN_TO_WAREHOUSE" && selectedCarton && (
+        <ShopReturnForm
+          mode="modal"
+          initialCartonId={selectedCarton.id}
+          initialProductName={selectedCarton.product.name}
+          initialRemainingCartons={selectedCarton.remainingCartons}
+          initialItemsPerCarton={selectedCarton.itemsPerCarton}
+          initialWarehouseLeavingPrice={selectedCarton.warehouseLeavingPrice}
           onSuccess={handleSaleComplete}
           onCancel={handleCloseAll}
         />

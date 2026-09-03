@@ -37,7 +37,7 @@ interface NavItem {
   roles?: Role[];
 }
 
-const PRIMARY_NAV_HREFS = new Set(["/imports", "/inventory", "/balance"]);
+const PRIMARY_NAV_HREFS = new Set(["/imports", "/inventory", "/balance", "/china-rmb"]);
 
 const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" /> },

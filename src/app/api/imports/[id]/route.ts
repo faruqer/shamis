@@ -62,6 +62,7 @@ type ExistingProduct = {
   cartons: {
     id: string;
     cartonNumber: string;
+    location: string;
     totalCartons: number;
     remainingCartons: number;
     itemsPerCarton: number;
@@ -155,6 +156,38 @@ function importHasSales(products: ExistingProduct[]) {
   return products.some((product) => productHasSales(product));
 }
 
+function getPrimaryWarehouseCarton(cartons: ExistingProduct["cartons"]) {
+  return (
+    cartons.find((carton) => carton.location === "WAREHOUSE" && carton.remainingCartons > 0) ??
+    cartons.find((carton) => carton.location === "WAREHOUSE") ??
+    cartons[0]
+  );
+}
+
+async function syncProductItemsPerCarton(
+  tx: Prisma.TransactionClient,
+  cartons: ExistingProduct["cartons"],
+  primaryCartonId: string,
+  itemsPerCarton: number
+) {
+  for (const sibling of cartons) {
+    if (sibling.id === primaryCartonId) continue;
+
+    const looseItems = Math.max(
+      0,
+      sibling.remainingItems - sibling.remainingCartons * sibling.itemsPerCarton
+    );
+
+    await tx.carton.update({
+      where: { id: sibling.id },
+      data: {
+        itemsPerCarton,
+        remainingItems: sibling.remainingCartons * itemsPerCarton + looseItems,
+      },
+    });
+  }
+}
+
 async function mergeImportProducts(
   tx: Prisma.TransactionClient,
   importId: string,
@@ -183,7 +216,7 @@ async function mergeImportProducts(
         },
       });
 
-      const carton = existing.cartons[0];
+      const carton = getPrimaryWarehouseCarton(existing.cartons);
       if (!carton) {
         await tx.carton.create({
           data: {
@@ -202,12 +235,17 @@ async function mergeImportProducts(
       }
 
       const cartonDelta = product.totalCartons - carton.totalCartons;
-      const itemsPerCartonDelta = product.itemsPerCarton - carton.itemsPerCarton;
-      let newRemainingItems =
-        carton.remainingItems + cartonDelta * product.itemsPerCarton;
+      const newRemainingCartons = carton.remainingCartons + cartonDelta;
+      const looseItems = Math.max(
+        0,
+        carton.remainingItems - carton.remainingCartons * carton.itemsPerCarton
+      );
+      const newRemainingItems = newRemainingCartons * product.itemsPerCarton + looseItems;
 
-      if (itemsPerCartonDelta !== 0) {
-        newRemainingItems += carton.totalCartons * itemsPerCartonDelta;
+      if (newRemainingCartons < 0) {
+        throw new Error(
+          `Cannot set "${product.name}" below ${carton.totalCartons - carton.remainingCartons} cartons — stock has already been sold or transferred`
+        );
       }
 
       if (newRemainingItems < 0) {
@@ -222,10 +260,19 @@ async function mergeImportProducts(
           cartonNumber: String(index + 1),
           itemsPerCarton: product.itemsPerCarton,
           totalCartons: product.totalCartons,
-          remainingCartons: carton.remainingCartons + cartonDelta,
+          remainingCartons: newRemainingCartons,
           remainingItems: newRemainingItems,
         },
       });
+
+      if (product.itemsPerCarton !== carton.itemsPerCarton) {
+        await syncProductItemsPerCarton(
+          tx,
+          existing.cartons,
+          carton.id,
+          product.itemsPerCarton
+        );
+      }
       continue;
     }
 
@@ -265,7 +312,7 @@ async function getImportWithRelations(id: string) {
       createdBy: { select: { name: true } },
       costs: { orderBy: { name: "asc" } },
       creditPersons: true,
-      products: { include: { cartons: true } },
+      products: { include: { cartons: { orderBy: [{ location: "asc" }, { createdAt: "asc" }] } } },
     },
   });
 }
@@ -280,6 +327,7 @@ async function loadExistingImport(id: string) {
             include: {
               saleItems: { select: { cartonsSold: true, itemsSold: true } },
             },
+            orderBy: [{ location: "asc" }, { createdAt: "asc" }],
           },
         },
       },
@@ -353,7 +401,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
               createdBy: { select: { name: true } },
               costs: true,
               creditPersons: true,
-              products: { include: { cartons: true } },
+              products: { include: { cartons: { orderBy: [{ location: "asc" }, { createdAt: "asc" }] } } },
             },
           });
         });
@@ -412,7 +460,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
             createdBy: { select: { name: true } },
             costs: true,
             creditPersons: true,
-            products: { include: { cartons: true } },
+            products: { include: { cartons: { orderBy: [{ location: "asc" }, { createdAt: "asc" }] } } },
           },
         });
       });
@@ -441,7 +489,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
             createdBy: { select: { name: true } },
             costs: true,
             creditPersons: true,
-            products: { include: { cartons: true } },
+            products: { include: { cartons: { orderBy: [{ location: "asc" }, { createdAt: "asc" }] } } },
           },
         });
       });
@@ -486,7 +534,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
           createdBy: { select: { name: true } },
           costs: true,
           creditPersons: true,
-          products: { include: { cartons: true } },
+          products: { include: { cartons: { orderBy: [{ location: "asc" }, { createdAt: "asc" }] } } },
         },
       });
     });

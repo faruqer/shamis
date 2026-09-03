@@ -44,9 +44,13 @@ export function EditImportClient({
             id: string;
             name: string;
             unitCost?: string;
-            cartons: { totalCartons: number; itemsPerCarton: number }[];
+            cartons: { totalCartons: number; itemsPerCarton: number; location?: string; remainingCartons?: number }[];
           }) => {
-            const carton = product.cartons[0];
+            const cartons = product.cartons ?? [];
+            const carton =
+              cartons.find((c) => c.location === "WAREHOUSE" && (c.remainingCartons ?? 0) > 0) ??
+              cartons.find((c) => c.location === "WAREHOUSE") ??
+              cartons[0];
             return {
               id: product.id,
               name: product.name,

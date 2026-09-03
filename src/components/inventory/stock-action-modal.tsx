@@ -1,13 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ShoppingCart, Store, Receipt, ArrowRight } from "lucide-react";
+import { ShoppingCart, Store, Receipt, ArrowRight, Undo2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { formatCurrency } from "@/lib/utils";
 import { Role } from "@prisma/client";
 import { cn } from "@/lib/utils";
 
-export type StockActionType = "WHOLESALE" | "SHOP_TRANSFER" | "RETAIL";
+export type StockActionType = "WHOLESALE" | "SHOP_TRANSFER" | "RETAIL" | "RETURN_TO_WAREHOUSE";
 
 interface StockActionModalProps {
   open: boolean;
@@ -64,6 +64,15 @@ const actions: {
     iconBg: "bg-[#c8e0d4] text-[#1e5a42]",
     locations: ["SHOP"],
     salespersonOnly: true,
+  },
+  {
+    type: "RETURN_TO_WAREHOUSE" as const,
+    title: "Return to Warehouse",
+    description: "Send stock back to the warehouse if transferred by mistake",
+    icon: Undo2,
+    color: "hover:border-[#ddd0b8] hover:bg-[#faf6ee]",
+    iconBg: "bg-[#ede4d0] text-[#7a5a20]",
+    locations: ["SHOP"],
   },
 ];
 

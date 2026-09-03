@@ -1,9 +1,10 @@
 import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
-import { isSalesperson, shopCartonFilter } from "@/lib/shop-scope";
+import { isSalesperson, requireSalespersonShopId, shopCartonFilter } from "@/lib/shop-scope";
 import { Role } from "@prisma/client";
 import { isWarehouseLocked } from "@/lib/settings";
+import { consolidateDuplicateShopCartons } from "@/lib/shop-stock";
 
 export async function GET(request: Request) {
   try {
@@ -24,10 +25,18 @@ export async function GET(request: Request) {
         where.location = "WAREHOUSE";
       } else {
         Object.assign(where, shopCartonFilter(session));
+        await prisma.$transaction(async (tx) => {
+          await consolidateDuplicateShopCartons(tx, requireSalespersonShopId(session));
+        });
       }
     } else {
       if (location) {
         where.location = location as "WAREHOUSE" | "SHOP";
+      }
+      if (!location || location === "SHOP") {
+        await prisma.$transaction(async (tx) => {
+          await consolidateDuplicateShopCartons(tx);
+        });
       }
     }
 

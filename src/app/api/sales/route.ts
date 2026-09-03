@@ -9,6 +9,7 @@ import { buildSaleCreateData, persistSaleDateEthiopian } from "@/lib/sale-prisma
 import { LedgerType, PaymentMethod, PaymentStatus, SaleType, Role } from "@prisma/client";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
 import { recordRetailCollection } from "@/lib/retail-ledger";
+import { getShopSalesperson, transferStockToShop } from "@/lib/shop-stock";
 
 const paymentMethodSchema = z.enum(["CASH", "BANK_TRANSFER", "MOBILE_MONEY", "CHECK", "OTHER"]);
 
@@ -134,111 +135,6 @@ function getPaymentStatus(total: number, paid: number): PaymentStatus {
   if (paid >= total) return "PAID";
   if (paid > 0) return "PARTIAL";
   return "CREDIT";
-}
-
-async function getShopSalesperson(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  shopId: string
-) {
-  const shopSalesperson = await tx.user.findFirst({
-    where: {
-      shopId,
-      role: Role.SALESPERSON,
-      isActive: true,
-    },
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (!shopSalesperson) {
-    throw new Error("Assign a salesperson to this shop before transferring stock");
-  }
-
-  return shopSalesperson;
-}
-
-async function transferStockToShop(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  carton: {
-    id: string;
-    productId: string;
-    cartonNumber: string;
-    itemsPerCarton: number;
-    remainingCartons: number;
-    remainingItems: number;
-  },
-  shopId: string,
-  cartonsToTransfer: number,
-  warehouseLeavingPrice: number,
-  retailUnitPrice: number
-) {
-  const itemsMoved = cartonsToTransfer * carton.itemsPerCarton;
-
-  if (cartonsToTransfer > carton.remainingCartons) {
-    throw new Error("Not enough cartons to transfer");
-  }
-
-  const shop = await tx.shop.findUnique({ where: { id: shopId } });
-  if (!shop || !shop.isActive) {
-    throw new Error("Shop not found");
-  }
-
-  const newRemainingCartons = carton.remainingCartons - cartonsToTransfer;
-  const newRemainingItems = carton.remainingItems - itemsMoved;
-
-  const priceData = {
-    warehouseLeavingPrice,
-    retailUnitPrice,
-  };
-
-  if (cartonsToTransfer === carton.remainingCartons && newRemainingItems === 0) {
-    await tx.carton.update({
-      where: { id: carton.id },
-      data: {
-        location: "SHOP",
-        shopId,
-        ...priceData,
-      },
-    });
-    return;
-  }
-
-  await tx.carton.update({
-    where: { id: carton.id },
-    data: {
-      remainingCartons: newRemainingCartons,
-      remainingItems: newRemainingItems,
-    },
-  });
-
-  const shopCarton = await tx.carton.findFirst({
-    where: { productId: carton.productId, location: "SHOP", shopId },
-  });
-
-  if (shopCarton) {
-    await tx.carton.update({
-      where: { id: shopCarton.id },
-      data: {
-        remainingCartons: shopCarton.remainingCartons + cartonsToTransfer,
-        remainingItems: shopCarton.remainingItems + itemsMoved,
-        totalCartons: shopCarton.totalCartons + cartonsToTransfer,
-        ...priceData,
-      },
-    });
-  } else {
-    await tx.carton.create({
-      data: {
-        productId: carton.productId,
-        cartonNumber: `${carton.cartonNumber}-shop-${shopId.slice(-8)}`,
-        itemsPerCarton: carton.itemsPerCarton,
-        totalCartons: cartonsToTransfer,
-        remainingCartons: cartonsToTransfer,
-        remainingItems: itemsMoved,
-        location: "SHOP",
-        shopId,
-        ...priceData,
-      },
-    });
-  }
 }
 
 export async function GET(request: NextRequest) {
