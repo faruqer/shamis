@@ -196,21 +196,68 @@ async function clearSaleFinancials(tx: Tx, saleId: string) {
   await tx.payment.deleteMany({ where: { saleId } });
 }
 
+export type SaleForReverse = NonNullable<Awaited<ReturnType<typeof getSaleForModify>>>;
+
+export async function reverseSaleInTransaction(tx: Tx, sale: SaleForReverse) {
+  if (sale.type === SaleType.SHOP_TRANSFER) {
+    await reverseShopTransferStock(tx, sale);
+  } else {
+    await restoreSaleStock(tx, sale.id);
+  }
+  await clearSaleFinancials(tx, sale.id);
+  await tx.saleItem.deleteMany({ where: { saleId: sale.id } });
+  await tx.sale.delete({ where: { id: sale.id } });
+}
+
 export async function reverseSale(session: SessionUser, saleId: string) {
   const sale = await getSaleForModify(saleId);
   if (!sale) throw new Error("Sale not found");
   assertCanModifySale(session, sale);
 
   await prisma.$transaction(async (tx) => {
-    if (sale.type === SaleType.SHOP_TRANSFER) {
-      await reverseShopTransferStock(tx, sale);
-    } else {
-      await restoreSaleStock(tx, saleId);
-    }
-    await clearSaleFinancials(tx, saleId);
-    await tx.saleItem.deleteMany({ where: { saleId } });
-    await tx.sale.delete({ where: { id: saleId } });
+    await reverseSaleInTransaction(tx, sale);
   });
+}
+
+const RESET_SALE_TYPES: SaleType[] = [
+  SaleType.RETAIL,
+  SaleType.SHOP_TRANSFER,
+  SaleType.WHOLESALE,
+];
+
+export async function resetSalesByTypes(types: SaleType[] = RESET_SALE_TYPES) {
+  const results: { reversed: string[]; failed: { saleNumber: string; error: string }[] } = {
+    reversed: [],
+    failed: [],
+  };
+
+  for (const type of types) {
+    const sales = await prisma.sale.findMany({
+      where: { type },
+      include: {
+        items: { include: { carton: { include: { product: true } } } },
+        payments: true,
+        ledgerEntries: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    for (const sale of sales) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          await reverseSaleInTransaction(tx, sale);
+        });
+        results.reversed.push(sale.saleNumber);
+      } catch (error) {
+        results.failed.push({
+          saleNumber: sale.saleNumber,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+  }
+
+  return results;
 }
 
 export async function updateRetailSale(
