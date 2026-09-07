@@ -289,3 +289,69 @@ export async function consolidateDuplicateShopCartons(tx: Tx, shopId?: string) {
 export function generateReturnReference() {
   return generateSaleNumber("SR");
 }
+
+export async function purgeEmptyShopCartons(tx: Tx, shopId?: string) {
+  const result = await tx.carton.deleteMany({
+    where: {
+      location: "SHOP",
+      remainingCartons: 0,
+      remainingItems: 0,
+      ...(shopId ? { shopId } : {}),
+    },
+  });
+  return result.count;
+}
+
+export async function moveRemainingShopStockToWarehouse(tx: Tx, shopId?: string) {
+  const shopCartons = await tx.carton.findMany({
+    where: {
+      location: "SHOP",
+      ...(shopId ? { shopId } : {}),
+      OR: [{ remainingCartons: { gt: 0 } }, { remainingItems: { gt: 0 } }],
+    },
+    include: { product: { select: { name: true } } },
+    orderBy: [{ productId: "asc" }, { createdAt: "asc" }],
+  });
+
+  const moved: { productName: string; cartons: number; items: number }[] = [];
+
+  for (const shopCarton of shopCartons) {
+    if (shopCarton.remainingCartons === 0 && shopCarton.remainingItems === 0) continue;
+
+    const warehouseCarton = await tx.carton.findFirst({
+      where: { productId: shopCarton.productId, location: "WAREHOUSE" },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const cartons = shopCarton.remainingCartons;
+    const items = shopCarton.remainingItems;
+
+    if (warehouseCarton) {
+      await tx.carton.update({
+        where: { id: warehouseCarton.id },
+        data: {
+          remainingCartons: warehouseCarton.remainingCartons + cartons,
+          remainingItems: warehouseCarton.remainingItems + items,
+        },
+      });
+      await tx.carton.update({
+        where: { id: shopCarton.id },
+        data: { remainingCartons: 0, remainingItems: 0 },
+      });
+    } else {
+      await tx.carton.update({
+        where: { id: shopCarton.id },
+        data: {
+          location: "WAREHOUSE",
+          shopId: null,
+          warehouseLeavingPrice: null,
+          retailUnitPrice: null,
+        },
+      });
+    }
+
+    moved.push({ productName: shopCarton.product.name, cartons, items });
+  }
+
+  return moved;
+}

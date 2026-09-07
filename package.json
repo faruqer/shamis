@@ -21,6 +21,8 @@
     "db:seed:preview": "tsx prisma/seed-preview.ts",
     "db:reset": "tsx scripts/db-reset.ts",
     "db:reset:sales": "tsx scripts/reset-sales.ts",
+    "db:cleanup:shop": "tsx scripts/cleanup-shop.ts",
+    "db:clean:server": "tsx scripts/clean-for-server.ts",
     "db:clear": "tsx scripts/db-clear.ts",
     "db:studio": "prisma studio"
   },

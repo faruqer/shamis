@@ -155,6 +155,63 @@ async function deductShopCartons(
   };
 }
 
+async function addStockToWarehouse(
+  tx: Tx,
+  productId: string,
+  cartonsAdded: number,
+  itemsAdded: number,
+  preferredCartonId?: string
+) {
+  let warehouseCarton =
+    preferredCartonId &&
+    (await tx.carton.findUnique({ where: { id: preferredCartonId } }));
+
+  if (!warehouseCarton || warehouseCarton.location !== "WAREHOUSE") {
+    warehouseCarton = await tx.carton.findFirst({
+      where: { productId, location: "WAREHOUSE" },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  if (warehouseCarton) {
+    await tx.carton.update({
+      where: { id: warehouseCarton.id },
+      data: {
+        remainingCartons: warehouseCarton.remainingCartons + cartonsAdded,
+        remainingItems: warehouseCarton.remainingItems + itemsAdded,
+      },
+    });
+    return;
+  }
+
+  const emptyShopShell = await tx.carton.findFirst({
+    where: {
+      productId,
+      location: "SHOP",
+      remainingCartons: 0,
+      remainingItems: 0,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (emptyShopShell) {
+    await tx.carton.update({
+      where: { id: emptyShopShell.id },
+      data: {
+        location: "WAREHOUSE",
+        shopId: null,
+        warehouseLeavingPrice: null,
+        retailUnitPrice: null,
+        remainingCartons: cartonsAdded,
+        remainingItems: itemsAdded,
+      },
+    });
+    return;
+  }
+
+  throw new Error("Warehouse stock not found");
+}
+
 async function reverseShopTransferStock(
   tx: Tx,
   sale: {
@@ -177,13 +234,23 @@ async function reverseShopTransferStock(
     const productName = carton.product.name;
 
     if (carton.location === "SHOP" && carton.shopId === sale.shopId) {
+      if (carton.remainingCartons === 0 && carton.remainingItems === 0) {
+        if (force) continue;
+        throw new Error(`Shop stock not found for "${productName}"`);
+      }
+
       if (carton.remainingCartons < cartonsToReverse && !force) {
         throw new Error(
           `Cannot reverse transfer for "${productName}": shop stock was partially sold or moved`
         );
       }
 
-      if (carton.remainingCartons >= cartonsToReverse) {
+      if (force && carton.remainingCartons < cartonsToReverse) {
+        cartonsToReverse = carton.remainingCartons;
+        if (cartonsToReverse === 0) continue;
+      }
+
+      if (carton.remainingCartons === cartonsToReverse) {
         await tx.carton.update({
           where: { id: carton.id },
           data: {
@@ -193,6 +260,24 @@ async function reverseShopTransferStock(
             retailUnitPrice: null,
           },
         });
+      } else {
+        const { cartonsRemoved, itemsMoved } = await deductShopCartons(
+          tx,
+          [carton],
+          cartonsToReverse
+        );
+
+        if (cartonsRemoved === 0) {
+          if (force) continue;
+          throw new Error(`Shop stock not found for "${productName}"`);
+        }
+
+        await addStockToWarehouse(
+          tx,
+          carton.productId,
+          cartonsRemoved,
+          itemsMoved
+        );
       }
       continue;
     }
@@ -232,13 +317,13 @@ async function reverseShopTransferStock(
       throw new Error(`Shop stock not found for "${productName}"`);
     }
 
-    await tx.carton.update({
-      where: { id: carton.id },
-      data: {
-        remainingCartons: carton.remainingCartons + cartonsRemoved,
-        remainingItems: carton.remainingItems + itemsMoved,
-      },
-    });
+    await addStockToWarehouse(
+      tx,
+      carton.productId,
+      cartonsRemoved,
+      itemsMoved,
+      carton.id
+    );
   }
 }
 
