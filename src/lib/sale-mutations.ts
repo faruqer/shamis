@@ -89,18 +89,84 @@ async function restoreSaleStock(tx: Tx, saleId: string) {
   }
 }
 
+async function findShopCartonsWithStock(
+  tx: Tx,
+  productId: string,
+  shopId: string
+) {
+  return tx.carton.findMany({
+    where: {
+      productId,
+      location: "SHOP",
+      shopId,
+      OR: [{ remainingCartons: { gt: 0 } }, { remainingItems: { gt: 0 } }],
+    },
+    orderBy: [{ remainingCartons: "desc" }, { createdAt: "asc" }],
+  });
+}
+
+async function deductShopCartons(
+  tx: Tx,
+  shopCartons: {
+    id: string;
+    itemsPerCarton: number;
+    remainingCartons: number;
+    remainingItems: number;
+    totalCartons: number;
+  }[],
+  cartonsToRemove: number
+) {
+  let cartonsLeft = cartonsToRemove;
+  let itemsMoved = 0;
+
+  for (const shopCarton of shopCartons) {
+    if (cartonsLeft <= 0) break;
+
+    const take = Math.min(cartonsLeft, shopCarton.remainingCartons);
+    if (take <= 0) continue;
+
+    const itemsTake = take * shopCarton.itemsPerCarton;
+    itemsMoved += itemsTake;
+    cartonsLeft -= take;
+
+    const newCartons = shopCarton.remainingCartons - take;
+    const newItems = shopCarton.remainingItems - itemsTake;
+
+    if (newCartons === 0 && newItems === 0) {
+      await tx.carton.update({
+        where: { id: shopCarton.id },
+        data: { remainingCartons: 0, remainingItems: 0 },
+      });
+    } else {
+      await tx.carton.update({
+        where: { id: shopCarton.id },
+        data: {
+          remainingCartons: newCartons,
+          remainingItems: newItems,
+          totalCartons: Math.max(0, shopCarton.totalCartons - take),
+        },
+      });
+    }
+  }
+
+  return {
+    cartonsRemoved: cartonsToRemove - cartonsLeft,
+    itemsMoved,
+  };
+}
+
 async function reverseShopTransferStock(
   tx: Tx,
   sale: {
     shopId: string | null;
     items: { cartonId: string; cartonsSold: number; itemsSold: number }[];
-  }
+  },
+  force = false
 ) {
   if (!sale.shopId) throw new Error("Transfer shop not found");
 
   for (const item of sale.items) {
-    const cartonsToReverse = item.cartonsSold;
-    const itemsToReverse = item.itemsSold;
+    let cartonsToReverse = item.cartonsSold;
 
     const carton = await tx.carton.findUnique({
       where: { id: item.cartonId },
@@ -111,24 +177,23 @@ async function reverseShopTransferStock(
     const productName = carton.product.name;
 
     if (carton.location === "SHOP" && carton.shopId === sale.shopId) {
-      if (
-        carton.remainingCartons < cartonsToReverse ||
-        carton.remainingItems < itemsToReverse
-      ) {
+      if (carton.remainingCartons < cartonsToReverse && !force) {
         throw new Error(
           `Cannot reverse transfer for "${productName}": shop stock was partially sold or moved`
         );
       }
 
-      await tx.carton.update({
-        where: { id: carton.id },
-        data: {
-          location: "WAREHOUSE",
-          shopId: null,
-          warehouseLeavingPrice: null,
-          retailUnitPrice: null,
-        },
-      });
+      if (carton.remainingCartons >= cartonsToReverse) {
+        await tx.carton.update({
+          where: { id: carton.id },
+          data: {
+            location: "WAREHOUSE",
+            shopId: null,
+            warehouseLeavingPrice: null,
+            retailUnitPrice: null,
+          },
+        });
+      }
       continue;
     }
 
@@ -138,48 +203,40 @@ async function reverseShopTransferStock(
       );
     }
 
-    const shopCarton = await tx.carton.findFirst({
-      where: {
-        productId: carton.productId,
-        location: "SHOP",
-        shopId: sale.shopId,
-      },
-    });
+    const shopCartons = await findShopCartonsWithStock(tx, carton.productId, sale.shopId);
+    const totalShopCartons = shopCartons.reduce((sum, c) => sum + c.remainingCartons, 0);
 
-    if (!shopCarton) {
+    if (shopCartons.length === 0 || totalShopCartons === 0) {
+      if (force) continue;
       throw new Error(`Shop stock not found for "${productName}"`);
     }
 
-    if (
-      shopCarton.remainingCartons < cartonsToReverse ||
-      shopCarton.remainingItems < itemsToReverse
-    ) {
-      throw new Error(
-        `Cannot reverse transfer for "${productName}": not enough stock left in the shop (some may have been sold)`
-      );
+    if (totalShopCartons < cartonsToReverse) {
+      if (!force) {
+        throw new Error(
+          `Cannot reverse transfer for "${productName}": not enough stock left in the shop (some may have been sold)`
+        );
+      }
+      cartonsToReverse = totalShopCartons;
+      if (cartonsToReverse === 0) continue;
     }
 
-    const newShopCartons = shopCarton.remainingCartons - cartonsToReverse;
-    const newShopItems = shopCarton.remainingItems - itemsToReverse;
+    const { cartonsRemoved, itemsMoved } = await deductShopCartons(
+      tx,
+      shopCartons,
+      cartonsToReverse
+    );
 
-    if (newShopCartons === 0 && newShopItems === 0) {
-      await tx.carton.delete({ where: { id: shopCarton.id } });
-    } else {
-      await tx.carton.update({
-        where: { id: shopCarton.id },
-        data: {
-          remainingCartons: newShopCartons,
-          remainingItems: newShopItems,
-          totalCartons: shopCarton.totalCartons - cartonsToReverse,
-        },
-      });
+    if (cartonsRemoved === 0) {
+      if (force) continue;
+      throw new Error(`Shop stock not found for "${productName}"`);
     }
 
     await tx.carton.update({
       where: { id: carton.id },
       data: {
-        remainingCartons: carton.remainingCartons + cartonsToReverse,
-        remainingItems: carton.remainingItems + itemsToReverse,
+        remainingCartons: carton.remainingCartons + cartonsRemoved,
+        remainingItems: carton.remainingItems + itemsMoved,
       },
     });
   }
@@ -198,9 +255,13 @@ async function clearSaleFinancials(tx: Tx, saleId: string) {
 
 export type SaleForReverse = NonNullable<Awaited<ReturnType<typeof getSaleForModify>>>;
 
-export async function reverseSaleInTransaction(tx: Tx, sale: SaleForReverse) {
+export async function reverseSaleInTransaction(
+  tx: Tx,
+  sale: SaleForReverse,
+  options?: { force?: boolean }
+) {
   if (sale.type === SaleType.SHOP_TRANSFER) {
-    await reverseShopTransferStock(tx, sale);
+    await reverseShopTransferStock(tx, sale, options?.force);
   } else {
     await restoreSaleStock(tx, sale.id);
   }
@@ -225,10 +286,18 @@ const RESET_SALE_TYPES: SaleType[] = [
   SaleType.WHOLESALE,
 ];
 
-export async function resetSalesByTypes(types: SaleType[] = RESET_SALE_TYPES) {
-  const results: { reversed: string[]; failed: { saleNumber: string; error: string }[] } = {
+export async function resetSalesByTypes(
+  types: SaleType[] = RESET_SALE_TYPES,
+  options?: { force?: boolean }
+) {
+  const results: {
+    reversed: string[];
+    failed: { saleNumber: string; error: string }[];
+    forced: string[];
+  } = {
     reversed: [],
     failed: [],
+    forced: [],
   };
 
   for (const type of types) {
@@ -245,14 +314,30 @@ export async function resetSalesByTypes(types: SaleType[] = RESET_SALE_TYPES) {
     for (const sale of sales) {
       try {
         await prisma.$transaction(async (tx) => {
-          await reverseSaleInTransaction(tx, sale);
+          await reverseSaleInTransaction(tx, sale, { force: options?.force });
         });
         results.reversed.push(sale.saleNumber);
       } catch (error) {
-        results.failed.push({
-          saleNumber: sale.saleNumber,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
+        if (options?.force) {
+          results.failed.push({
+            saleNumber: sale.saleNumber,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          continue;
+        }
+
+        try {
+          await prisma.$transaction(async (tx) => {
+            await reverseSaleInTransaction(tx, sale, { force: true });
+          });
+          results.reversed.push(sale.saleNumber);
+          results.forced.push(sale.saleNumber);
+        } catch (retryError) {
+          results.failed.push({
+            saleNumber: sale.saleNumber,
+            error: retryError instanceof Error ? retryError.message : "Unknown error",
+          });
+        }
       }
     }
   }

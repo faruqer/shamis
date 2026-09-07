@@ -44,6 +44,13 @@ async function main() {
     console.log(`  ✓ ${saleNumber}`);
   }
 
+  if (results.forced.length > 0) {
+    console.log(`\nForce-completed (partial shop stock): ${results.forced.length}`);
+    for (const saleNumber of results.forced) {
+      console.log(`  ⚠ ${saleNumber}`);
+    }
+  }
+
   if (results.failed.length > 0) {
     console.log(`\nFailed: ${results.failed.length}`);
     for (const failure of results.failed) {
