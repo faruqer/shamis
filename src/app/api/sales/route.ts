@@ -8,7 +8,7 @@ import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
 import { buildSaleCreateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
 import { LedgerType, PaymentStatus, SaleType, Role } from "@prisma/client";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
-import { getShopSalesperson, transferStockToShop } from "@/lib/shop-stock";
+import { getShopSalesperson, retailStockAfterSale, transferStockToShop } from "@/lib/shop-stock";
 import { createSalePayments, normalizePaymentSplits } from "@/lib/sale-payments";
 
 const paymentMethodSchema = z.enum(["CASH", "BANK_TRANSFER", "MOBILE_MONEY", "CHECK", "OTHER"]);
@@ -142,13 +142,13 @@ export async function GET(request: NextRequest) {
 
     const where: {
       type?: SaleType;
-      items?: { some: { carton: { shopId: string } } };
+      shopId?: string;
     } = {};
 
     if (isSalesperson(session)) {
       const shopId = requireSalespersonShopId(session);
       where.type = "RETAIL";
-      where.items = { some: { carton: { shopId } } };
+      where.shopId = shopId;
     } else if (type) {
       where.type = type as SaleType;
     }
@@ -395,7 +395,7 @@ export async function POST(request: NextRequest) {
           if (itemsQuantity > carton.remainingItems) {
             throw new Error(`Not enough stock for ${carton.product.name}`);
           }
-        } else if (itemsSold > carton.remainingItems) {
+        } else if (itemsQuantity > carton.remainingItems) {
           throw new Error(`Not enough items for ${carton.product.name}`);
         }
 
@@ -426,10 +426,14 @@ export async function POST(request: NextRequest) {
 
         await tx.carton.update({
           where: { id: item.cartonId },
-          data: {
-            remainingCartons: carton.remainingCartons - cartonsSold,
-            remainingItems: carton.remainingItems - itemsSold - cartonsSold * carton.itemsPerCarton,
-          },
+          data:
+            data.type === "RETAIL"
+              ? retailStockAfterSale(carton, cartonsSold, itemsSold)
+              : {
+                  remainingCartons: carton.remainingCartons - cartonsSold,
+                  remainingItems:
+                    carton.remainingItems - itemsSold - cartonsSold * carton.itemsPerCarton,
+                },
         });
       }
 
@@ -445,6 +449,9 @@ export async function POST(request: NextRequest) {
           paymentStatus = "CREDIT";
         } else {
           paidAmount = data.paidAmount ?? 0;
+          if (paidAmount > totalAmount + 0.001) {
+            throw new Error("Amount paid cannot be more than the sale total");
+          }
           paymentStatus = getPaymentStatus(totalAmount, paidAmount);
         }
       } else {

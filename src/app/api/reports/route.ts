@@ -2,8 +2,15 @@ import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { decimalToNumber } from "@/lib/utils";
-import { getImportTotalValue } from "@/lib/import-utils";
-import { getRetailSaleItemCost, getSaleCost, getSaleItemCost, getSaleProfit } from "@/lib/sale-utils";
+import { getImportTotalValue, getProductTotalItems } from "@/lib/import-utils";
+import {
+  getRetailSaleItemCost,
+  getRetailSaleItemQuantity,
+  getSaleCost,
+  getSaleItemCost,
+  getSaleItemQuantity,
+  getSaleProfit,
+} from "@/lib/sale-utils";
 import { Role } from "@prisma/client";
 
 function getDays(period: string) {
@@ -427,6 +434,10 @@ export async function GET(request: Request) {
             const itemRevenue = decimalToNumber(item.totalPrice);
             const itemProfit = getSaleProfit(itemRevenue, toProfitItems([item]), sale.type);
             const itemCost = getSaleItemCostForType(item, sale.type);
+            const itemQuantity =
+              sale.type === "RETAIL"
+                ? getRetailSaleItemQuantity(item.cartonsSold, item.itemsSold, item.carton.itemsPerCarton)
+                : getSaleItemQuantity(item.cartonsSold, item.itemsSold, item.carton.itemsPerCarton);
             const existing = productStats.get(name) ?? {
               name,
               revenue: 0,
@@ -437,7 +448,7 @@ export async function GET(request: Request) {
             existing.revenue += itemRevenue;
             existing.profit += itemProfit;
             existing.cost += itemCost;
-            existing.itemsSold += item.itemsSold;
+            existing.itemsSold += itemQuantity;
             productStats.set(name, existing);
 
             const importId = item.carton.product.importId;
@@ -451,7 +462,7 @@ export async function GET(request: Request) {
               importRow.revenue += itemRevenue;
               importRow.cost += itemCost;
               importRow.profit += itemProfit;
-              importRow.itemsSold += item.itemsSold;
+              importRow.itemsSold += itemQuantity;
               importStats.set(importId, importRow);
             }
           }
@@ -520,22 +531,13 @@ export async function GET(request: Request) {
         .map((imp) => {
           const stats = importStats.get(imp.id)!;
           const totalItems = imp.products.reduce(
-            (sum, product) =>
-              sum +
-              product.cartons.reduce(
-                (cartonSum, carton) => cartonSum + carton.totalCartons * carton.itemsPerCarton,
-                0
-              ),
+            (sum, product) => sum + getProductTotalItems(product.cartons),
             0
           );
+          // remainingItems already includes full cartons; stock in shops is still unsold.
           const remainingItems = imp.products.reduce(
             (sum, product) =>
-              sum +
-              product.cartons.reduce(
-                (cartonSum, carton) =>
-                  cartonSum + carton.remainingCartons * carton.itemsPerCarton + carton.remainingItems,
-                0
-              ),
+              sum + product.cartons.reduce((cartonSum, carton) => cartonSum + carton.remainingItems, 0),
             0
           );
           const percentSold =
@@ -548,6 +550,7 @@ export async function GET(request: Request) {
               productCustomCost: product.productCustomCost.toString(),
               taxSeaFreight: product.taxSeaFreight.toString(),
               cartons: product.cartons.map((carton) => ({
+                cartonNumber: carton.cartonNumber,
                 totalCartons: carton.totalCartons,
                 itemsPerCarton: carton.itemsPerCarton,
               })),
@@ -655,6 +658,7 @@ export async function GET(request: Request) {
               productCustomCost: product.productCustomCost.toString(),
               taxSeaFreight: product.taxSeaFreight.toString(),
               cartons: product.cartons.map((carton) => ({
+                cartonNumber: carton.cartonNumber,
                 totalCartons: carton.totalCartons,
                 itemsPerCarton: carton.itemsPerCarton,
               })),

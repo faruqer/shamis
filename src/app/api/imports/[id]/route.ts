@@ -158,6 +158,8 @@ function importHasSales(products: ExistingProduct[]) {
 
 function getPrimaryWarehouseCarton(cartons: ExistingProduct["cartons"]) {
   return (
+    // The original import row ("1", "2") holds the imported total.
+    cartons.find((carton) => !carton.cartonNumber.includes("-")) ??
     cartons.find((carton) => carton.location === "WAREHOUSE" && carton.remainingCartons > 0) ??
     cartons.find((carton) => carton.location === "WAREHOUSE") ??
     cartons[0]
@@ -235,6 +237,14 @@ async function mergeImportProducts(
       }
 
       const cartonDelta = product.totalCartons - carton.totalCartons;
+      if (
+        carton.location !== "WAREHOUSE" &&
+        (cartonDelta !== 0 || product.itemsPerCarton !== carton.itemsPerCarton)
+      ) {
+        throw new Error(
+          `Cannot change cartons for "${product.name}" after its stock was moved to a shop in full. Only the name and cost can be edited.`
+        );
+      }
       const newRemainingCartons = carton.remainingCartons + cartonDelta;
       const looseItems = Math.max(
         0,

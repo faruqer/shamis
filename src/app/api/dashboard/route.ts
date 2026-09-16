@@ -133,7 +133,7 @@ export async function GET() {
         prisma.sale.aggregate({
           where: {
             type: "RETAIL",
-            items: { some: { carton: { shopId } } },
+            shopId,
           },
           _sum: { totalAmount: true, paidAmount: true },
           _count: true,
@@ -141,7 +141,7 @@ export async function GET() {
         prisma.sale.findMany({
           where: {
             type: "RETAIL",
-            items: { some: { carton: { shopId } } },
+            shopId,
           },
           take: 5,
           orderBy: { saleDate: "desc" },
@@ -159,7 +159,7 @@ export async function GET() {
           where: {
             type: "RETAIL",
             saleDate: { gte: trendRange.start, lte: trendRange.end },
-            items: { some: { carton: { shopId } } },
+            shopId,
           },
           select: { saleDate: true, totalAmount: true },
           orderBy: { saleDate: "asc" },
@@ -170,7 +170,7 @@ export async function GET() {
         where: {
           type: "RETAIL",
           paymentStatus: { in: ["CREDIT", "PARTIAL"] },
-          items: { some: { carton: { shopId } } },
+          shopId,
         },
         _sum: { totalAmount: true, paidAmount: true },
         _count: true,

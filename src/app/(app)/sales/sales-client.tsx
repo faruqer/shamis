@@ -127,8 +127,10 @@ function sortSalesRecentFirst<T extends { createdAt: string; saleDate: string }>
   );
 }
 
-function formatItemQuantity(item: SaleRecord["items"][0]) {
-  const { cartonsSold, itemsSold } = item;
+function formatItemQuantity(item: SaleRecord["items"][0], saleType?: string) {
+  const { cartonsSold } = item;
+  // Shop transfers store the total pieces moved, not extra loose pieces.
+  const itemsSold = saleType === "SHOP_TRANSFER" ? 0 : item.itemsSold;
 
   if (cartonsSold > 0 && itemsSold > 0) {
     return `${cartonsSold} carton${cartonsSold !== 1 ? "s" : ""} and ${itemsSold} piece${itemsSold !== 1 ? "s" : ""}`;
@@ -595,7 +597,7 @@ export function SalesClient({
                                 )}
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {formatItemQuantity(item)}
+                                {formatItemQuantity(item, sale.type)}
                                 <span className="text-foreground/80">
                                   {" "}
                                   · {formatCurrency(getItemUnitPrice(item))} per piece

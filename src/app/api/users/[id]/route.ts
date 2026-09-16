@@ -29,13 +29,17 @@ const userSelect = {
 
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
-    await requireSession(Role.ADMIN);
+    const session = await requireSession(Role.ADMIN);
     const { id } = await context.params;
     const body = await request.json();
     const data = userUpdateSchema.parse(body);
 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) return errorResponse("User not found", 404);
+
+    if (session.id === id && (data.isActive === false || data.role !== Role.ADMIN)) {
+      throw new Error("You cannot deactivate your own account or remove your own admin role");
+    }
 
     const duplicate = await prisma.user.findFirst({
       where: { email: data.email, NOT: { id } },
@@ -83,8 +87,29 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
 
     if (session.id === id) throw new Error("You cannot delete your own account");
 
-    const existing = await prisma.user.findUnique({ where: { id } });
+    const existing = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            wholesaleSales: true,
+            retailSales: true,
+            ledgerEntries: true,
+            expensesPaid: true,
+            createdImports: true,
+            hawalaTransfers: true,
+            chinaRmbCredits: true,
+          },
+        },
+      },
+    });
     if (!existing) return errorResponse("User not found", 404);
+
+    if (Object.values(existing._count).some((count) => count > 0)) {
+      throw new Error(
+        "This user has sales, balance or other history and cannot be deleted. Deactivate the user instead."
+      );
+    }
 
     await prisma.user.delete({ where: { id } });
     return jsonResponse({ success: true });

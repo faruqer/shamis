@@ -3,6 +3,58 @@ import { generateSaleNumber } from "@/lib/utils";
 
 type Tx = Prisma.TransactionClient;
 
+/** Original import rows use plain carton numbers ("1", "2"); split rows get a suffix. */
+export function isImportOriginalCarton(carton: { cartonNumber: string }) {
+  return !carton.cartonNumber.includes("-");
+}
+
+/** Carton numbers are unique per product, so derived rows need a free suffix. */
+export async function getUniqueCartonNumber(tx: Tx, productId: string, base: string) {
+  let candidate = base;
+  for (let attempt = 2; ; attempt++) {
+    const taken = await tx.carton.findUnique({
+      where: { productId_cartonNumber: { productId, cartonNumber: candidate } },
+      select: { id: true },
+    });
+    if (!taken) return candidate;
+    candidate = `${base}-${attempt}`;
+  }
+}
+
+/**
+ * Stock left after a retail sale. Selling loose items opens cartons, so the full
+ * carton count can never exceed what the remaining items can fill.
+ */
+export function retailStockAfterSale(
+  carton: { itemsPerCarton: number; remainingCartons: number; remainingItems: number },
+  cartonsSold: number,
+  itemsSold: number
+) {
+  const remainingItems = carton.remainingItems - cartonsSold * carton.itemsPerCarton - itemsSold;
+  const remainingCartons = Math.max(
+    0,
+    Math.min(
+      carton.remainingCartons - cartonsSold,
+      Math.floor(remainingItems / carton.itemsPerCarton)
+    )
+  );
+  return { remainingCartons, remainingItems };
+}
+
+/** Stock after a retail sale is reversed (inverse of retailStockAfterSale). */
+export function retailStockAfterRestore(
+  carton: { itemsPerCarton: number; remainingCartons: number; remainingItems: number },
+  cartonsSold: number,
+  itemsSold: number
+) {
+  const remainingItems = carton.remainingItems + cartonsSold * carton.itemsPerCarton + itemsSold;
+  const remainingCartons = Math.min(
+    carton.remainingCartons + cartonsSold + Math.ceil(itemsSold / carton.itemsPerCarton),
+    Math.floor(remainingItems / carton.itemsPerCarton)
+  );
+  return { remainingCartons, remainingItems };
+}
+
 export async function getShopSalesperson(tx: Tx, shopId: string) {
   const shopSalesperson = await tx.user.findFirst({
     where: {
@@ -24,6 +76,7 @@ async function mergeIntoShopCarton(
   tx: Tx,
   shopCarton: {
     id: string;
+    cartonNumber: string;
     remainingCartons: number;
     remainingItems: number;
     totalCartons: number;
@@ -37,7 +90,10 @@ async function mergeIntoShopCarton(
     data: {
       remainingCartons: shopCarton.remainingCartons + cartonsToAdd,
       remainingItems: shopCarton.remainingItems + itemsToAdd,
-      totalCartons: shopCarton.totalCartons + cartonsToAdd,
+      // Original import rows keep the imported total so import value stays correct.
+      ...(isImportOriginalCarton(shopCarton)
+        ? {}
+        : { totalCartons: shopCarton.totalCartons + cartonsToAdd }),
       ...priceData,
     },
   });
@@ -60,7 +116,7 @@ export async function transferStockToShop(
 ) {
   const itemsMoved = cartonsToTransfer * carton.itemsPerCarton;
 
-  if (cartonsToTransfer > carton.remainingCartons) {
+  if (cartonsToTransfer > carton.remainingCartons || itemsMoved > carton.remainingItems) {
     throw new Error("Not enough cartons to transfer");
   }
 
@@ -77,8 +133,14 @@ export async function transferStockToShop(
     retailUnitPrice,
   };
 
+  // Only merge rows with the same carton size, otherwise item counts get corrupted.
   const existingShopCarton = await tx.carton.findFirst({
-    where: { productId: carton.productId, location: "SHOP", shopId },
+    where: {
+      productId: carton.productId,
+      location: "SHOP",
+      shopId,
+      itemsPerCarton: carton.itemsPerCarton,
+    },
   });
 
   if (cartonsToTransfer === carton.remainingCartons && newRemainingItems === 0) {
@@ -127,7 +189,11 @@ export async function transferStockToShop(
     await tx.carton.create({
       data: {
         productId: carton.productId,
-        cartonNumber: `${carton.cartonNumber}-shop-${shopId.slice(-8)}`,
+        cartonNumber: await getUniqueCartonNumber(
+          tx,
+          carton.productId,
+          `${carton.cartonNumber}-shop-${shopId.slice(-8)}`
+        ),
         itemsPerCarton: carton.itemsPerCarton,
         totalCartons: cartonsToTransfer,
         remainingCartons: cartonsToTransfer,
@@ -165,7 +231,9 @@ export async function returnStockToWarehouse(
     throw new Error("Not enough cartons to return");
   }
   if (itemsToReturn > shopCarton.remainingItems) {
-    throw new Error("Not enough stock to return");
+    throw new Error(
+      `Not enough stock to return: ${cartonsToReturn} cartons need ${itemsToReturn} items, but the shop only has ${shopCarton.remainingItems} items left`
+    );
   }
 
   const newShopCartons = shopCarton.remainingCartons - cartonsToReturn;
@@ -175,6 +243,7 @@ export async function returnStockToWarehouse(
     where: {
       productId: shopCarton.productId,
       location: "WAREHOUSE",
+      itemsPerCarton: shopCarton.itemsPerCarton,
     },
     orderBy: { createdAt: "asc" },
   });
@@ -185,7 +254,6 @@ export async function returnStockToWarehouse(
       data: {
         remainingCartons: warehouseCarton.remainingCartons + cartonsToReturn,
         remainingItems: warehouseCarton.remainingItems + itemsToReturn,
-        totalCartons: warehouseCarton.totalCartons + cartonsToReturn,
       },
     });
   } else if (newShopCartons === 0 && newShopItems === 0) {
@@ -203,7 +271,11 @@ export async function returnStockToWarehouse(
     await tx.carton.create({
       data: {
         productId: shopCarton.productId,
-        cartonNumber: shopCarton.cartonNumber.replace(/-shop-[a-z0-9]+$/i, ""),
+        cartonNumber: await getUniqueCartonNumber(
+          tx,
+          shopCarton.productId,
+          `${shopCarton.cartonNumber.replace(/-shop-[a-z0-9]+$/i, "")}-ret`
+        ),
         itemsPerCarton: shopCarton.itemsPerCarton,
         totalCartons: cartonsToReturn,
         remainingCartons: cartonsToReturn,
@@ -224,7 +296,9 @@ export async function returnStockToWarehouse(
       data: {
         remainingCartons: newShopCartons,
         remainingItems: newShopItems,
-        totalCartons: Math.max(0, shopCarton.totalCartons - cartonsToReturn),
+        ...(isImportOriginalCarton(shopCarton)
+          ? {}
+          : { totalCartons: Math.max(0, shopCarton.totalCartons - cartonsToReturn) }),
       },
     });
   }
@@ -246,7 +320,7 @@ export async function consolidateDuplicateShopCartons(tx: Tx, shopId?: string) {
 
   for (const carton of shopCartons) {
     if (!carton.shopId) continue;
-    const key = `${carton.productId}:${carton.shopId}`;
+    const key = `${carton.productId}:${carton.shopId}:${carton.itemsPerCarton}`;
     const group = groups.get(key) ?? [];
     group.push(carton);
     groups.set(key, group);
@@ -319,7 +393,11 @@ export async function moveRemainingShopStockToWarehouse(tx: Tx, shopId?: string)
     if (shopCarton.remainingCartons === 0 && shopCarton.remainingItems === 0) continue;
 
     const warehouseCarton = await tx.carton.findFirst({
-      where: { productId: shopCarton.productId, location: "WAREHOUSE" },
+      where: {
+        productId: shopCarton.productId,
+        location: "WAREHOUSE",
+        itemsPerCarton: shopCarton.itemsPerCarton,
+      },
       orderBy: { createdAt: "asc" },
     });
 

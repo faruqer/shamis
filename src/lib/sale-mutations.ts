@@ -12,7 +12,14 @@ import { ensureSaleDateEthiopian, resolveSaleDates } from "@/lib/sale-dates";
 import { buildSaleUpdateData, persistSaleDateEthiopian } from "@/lib/sale-prisma";
 import type { SessionUser } from "@/lib/auth-edge";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
-import { getShopSalesperson, transferStockToShop } from "@/lib/shop-stock";
+import {
+  getShopSalesperson,
+  getUniqueCartonNumber,
+  isImportOriginalCarton,
+  retailStockAfterRestore,
+  retailStockAfterSale,
+  transferStockToShop,
+} from "@/lib/shop-stock";
 import { createSalePayments, normalizePaymentSplits } from "@/lib/sale-payments";
 
 type Tx = Prisma.TransactionClient;
@@ -71,22 +78,90 @@ export function assertCanModifySale(
   }
 }
 
-async function restoreSaleStock(tx: Tx, saleId: string) {
+type RestorableSale = {
+  id: string;
+  type: SaleType;
+  shopId: string | null;
+};
+
+/** Put sold stock back where it came from: warehouse for wholesale, the sale's shop for retail. */
+async function restoreSaleStock(tx: Tx, sale: RestorableSale) {
   const items = await tx.saleItem.findMany({
-    where: { saleId },
-    include: { carton: true },
+    where: { saleId: sale.id },
+    select: { cartonId: true, cartonsSold: true, itemsSold: true },
   });
 
   for (const item of items) {
-    const moved = item.cartonsSold * item.carton.itemsPerCarton + item.itemsSold;
-    await tx.carton.update({
+    // Re-read each time: the same carton can appear on more than one line.
+    const carton = await tx.carton.findUnique({
       where: { id: item.cartonId },
-      data: {
-        remainingCartons: item.carton.remainingCartons + item.cartonsSold,
-        remainingItems: item.carton.remainingItems + moved,
+      include: { product: { select: { name: true } } },
+    });
+    if (!carton) throw new Error("Carton not found");
+
+    if (sale.type === SaleType.RETAIL) {
+      await restoreRetailItem(tx, sale, carton, item);
+      continue;
+    }
+
+    const moved = item.cartonsSold * carton.itemsPerCarton + item.itemsSold;
+    if (carton.location === "WAREHOUSE") {
+      await tx.carton.update({
+        where: { id: carton.id },
+        data: {
+          remainingCartons: carton.remainingCartons + item.cartonsSold,
+          remainingItems: carton.remainingItems + moved,
+        },
+      });
+    } else {
+      // The source carton has since been moved to a shop; wholesale stock belongs in the warehouse.
+      await addStockToWarehouse(tx, carton, item.cartonsSold, moved);
+    }
+  }
+}
+
+async function restoreRetailItem(
+  tx: Tx,
+  sale: RestorableSale,
+  carton: {
+    id: string;
+    productId: string;
+    location: string;
+    shopId: string | null;
+    itemsPerCarton: number;
+    remainingCartons: number;
+    remainingItems: number;
+    product: { name: string };
+  },
+  item: { cartonsSold: number; itemsSold: number }
+) {
+  const shopId = sale.shopId ?? carton.shopId;
+  let target =
+    carton.location === "SHOP" && carton.shopId === shopId ? carton : null;
+
+  if (!target && shopId) {
+    target = await tx.carton.findFirst({
+      where: {
+        productId: carton.productId,
+        location: "SHOP",
+        shopId,
+        itemsPerCarton: carton.itemsPerCarton,
       },
+      orderBy: [{ remainingItems: "desc" }, { createdAt: "asc" }],
+      include: { product: { select: { name: true } } },
     });
   }
+
+  if (!target) {
+    throw new Error(
+      `Cannot reverse this sale: "${carton.product.name}" is no longer stocked in this shop`
+    );
+  }
+
+  await tx.carton.update({
+    where: { id: target.id },
+    data: retailStockAfterRestore(target, item.cartonsSold, item.itemsSold),
+  });
 }
 
 async function findShopCartonsWithStock(
@@ -99,16 +174,29 @@ async function findShopCartonsWithStock(
       productId,
       location: "SHOP",
       shopId,
-      OR: [{ remainingCartons: { gt: 0 } }, { remainingItems: { gt: 0 } }],
+      remainingCartons: { gt: 0 },
     },
     orderBy: [{ remainingCartons: "desc" }, { createdAt: "asc" }],
   });
+}
+
+/** Full cartons that are really available (loose-item sales may have opened some). */
+function fullCartonsAvailable(carton: {
+  itemsPerCarton: number;
+  remainingCartons: number;
+  remainingItems: number;
+}) {
+  return Math.max(
+    0,
+    Math.min(carton.remainingCartons, Math.floor(carton.remainingItems / carton.itemsPerCarton))
+  );
 }
 
 async function deductShopCartons(
   tx: Tx,
   shopCartons: {
     id: string;
+    cartonNumber: string;
     itemsPerCarton: number;
     remainingCartons: number;
     remainingItems: number;
@@ -122,31 +210,23 @@ async function deductShopCartons(
   for (const shopCarton of shopCartons) {
     if (cartonsLeft <= 0) break;
 
-    const take = Math.min(cartonsLeft, shopCarton.remainingCartons);
+    const take = Math.min(cartonsLeft, fullCartonsAvailable(shopCarton));
     if (take <= 0) continue;
 
     const itemsTake = take * shopCarton.itemsPerCarton;
     itemsMoved += itemsTake;
     cartonsLeft -= take;
 
-    const newCartons = shopCarton.remainingCartons - take;
-    const newItems = shopCarton.remainingItems - itemsTake;
-
-    if (newCartons === 0 && newItems === 0) {
-      await tx.carton.update({
-        where: { id: shopCarton.id },
-        data: { remainingCartons: 0, remainingItems: 0 },
-      });
-    } else {
-      await tx.carton.update({
-        where: { id: shopCarton.id },
-        data: {
-          remainingCartons: newCartons,
-          remainingItems: newItems,
-          totalCartons: Math.max(0, shopCarton.totalCartons - take),
-        },
-      });
-    }
+    await tx.carton.update({
+      where: { id: shopCarton.id },
+      data: {
+        remainingCartons: shopCarton.remainingCartons - take,
+        remainingItems: shopCarton.remainingItems - itemsTake,
+        ...(isImportOriginalCarton(shopCarton)
+          ? {}
+          : { totalCartons: Math.max(0, shopCarton.totalCartons - take) }),
+      },
+    });
   }
 
   return {
@@ -157,21 +237,27 @@ async function deductShopCartons(
 
 async function addStockToWarehouse(
   tx: Tx,
-  productId: string,
+  source: {
+    id: string;
+    productId: string;
+    cartonNumber: string;
+    itemsPerCarton: number;
+    location: string;
+  },
   cartonsAdded: number,
-  itemsAdded: number,
-  preferredCartonId?: string
+  itemsAdded: number
 ) {
-  let warehouseCarton =
-    preferredCartonId &&
-    (await tx.carton.findUnique({ where: { id: preferredCartonId } }));
-
-  if (!warehouseCarton || warehouseCarton.location !== "WAREHOUSE") {
-    warehouseCarton = await tx.carton.findFirst({
-      where: { productId, location: "WAREHOUSE" },
-      orderBy: { createdAt: "asc" },
-    });
-  }
+  const warehouseCarton =
+    source.location === "WAREHOUSE"
+      ? await tx.carton.findUnique({ where: { id: source.id } })
+      : await tx.carton.findFirst({
+          where: {
+            productId: source.productId,
+            location: "WAREHOUSE",
+            itemsPerCarton: source.itemsPerCarton,
+          },
+          orderBy: { createdAt: "asc" },
+        });
 
   if (warehouseCarton) {
     await tx.carton.update({
@@ -184,32 +270,23 @@ async function addStockToWarehouse(
     return;
   }
 
-  const emptyShopShell = await tx.carton.findFirst({
-    where: {
-      productId,
-      location: "SHOP",
-      remainingCartons: 0,
-      remainingItems: 0,
+  // No warehouse row left for this product: create one instead of moving a shop row,
+  // so retail sales that point at the shop row still reverse into the shop.
+  await tx.carton.create({
+    data: {
+      productId: source.productId,
+      cartonNumber: await getUniqueCartonNumber(
+        tx,
+        source.productId,
+        `${source.cartonNumber.replace(/-shop-[a-z0-9]+$/i, "")}-ret`
+      ),
+      itemsPerCarton: source.itemsPerCarton,
+      totalCartons: cartonsAdded,
+      remainingCartons: cartonsAdded,
+      remainingItems: itemsAdded,
+      location: "WAREHOUSE",
     },
-    orderBy: { createdAt: "asc" },
   });
-
-  if (emptyShopShell) {
-    await tx.carton.update({
-      where: { id: emptyShopShell.id },
-      data: {
-        location: "WAREHOUSE",
-        shopId: null,
-        warehouseLeavingPrice: null,
-        retailUnitPrice: null,
-        remainingCartons: cartonsAdded,
-        remainingItems: itemsAdded,
-      },
-    });
-    return;
-  }
-
-  throw new Error("Warehouse stock not found");
 }
 
 async function reverseShopTransferStock(
@@ -232,77 +309,16 @@ async function reverseShopTransferStock(
     if (!carton) throw new Error("Carton not found");
 
     const productName = carton.product.name;
-
-    if (carton.location === "SHOP" && carton.shopId === sale.shopId) {
-      if (carton.remainingCartons === 0 && carton.remainingItems === 0) {
-        if (force) continue;
-        throw new Error(`Shop stock not found for "${productName}"`);
-      }
-
-      if (carton.remainingCartons < cartonsToReverse && !force) {
-        throw new Error(
-          `Cannot reverse transfer for "${productName}": shop stock was partially sold or moved`
-        );
-      }
-
-      if (force && carton.remainingCartons < cartonsToReverse) {
-        cartonsToReverse = carton.remainingCartons;
-        if (cartonsToReverse === 0) continue;
-      }
-
-      if (carton.remainingCartons === cartonsToReverse) {
-        await tx.carton.update({
-          where: { id: carton.id },
-          data: {
-            location: "WAREHOUSE",
-            shopId: null,
-            warehouseLeavingPrice: null,
-            retailUnitPrice: null,
-          },
-        });
-      } else {
-        const { cartonsRemoved, itemsMoved } = await deductShopCartons(
-          tx,
-          [carton],
-          cartonsToReverse
-        );
-
-        if (cartonsRemoved === 0) {
-          if (force) continue;
-          throw new Error(`Shop stock not found for "${productName}"`);
-        }
-
-        await addStockToWarehouse(
-          tx,
-          carton.productId,
-          cartonsRemoved,
-          itemsMoved
-        );
-      }
-      continue;
-    }
-
-    if (carton.location !== "WAREHOUSE") {
-      throw new Error(
-        `Cannot reverse transfer for "${productName}": stock is in an unexpected location`
-      );
-    }
-
     const shopCartons = await findShopCartonsWithStock(tx, carton.productId, sale.shopId);
-    const totalShopCartons = shopCartons.reduce((sum, c) => sum + c.remainingCartons, 0);
+    const available = shopCartons.reduce((sum, c) => sum + fullCartonsAvailable(c), 0);
 
-    if (shopCartons.length === 0 || totalShopCartons === 0) {
-      if (force) continue;
-      throw new Error(`Shop stock not found for "${productName}"`);
-    }
-
-    if (totalShopCartons < cartonsToReverse) {
+    if (available < cartonsToReverse) {
       if (!force) {
         throw new Error(
-          `Cannot reverse transfer for "${productName}": not enough stock left in the shop (some may have been sold)`
+          `Cannot reverse transfer for "${productName}": not enough full cartons left in the shop (some may have been sold or returned)`
         );
       }
-      cartonsToReverse = totalShopCartons;
+      cartonsToReverse = available;
       if (cartonsToReverse === 0) continue;
     }
 
@@ -317,13 +333,7 @@ async function reverseShopTransferStock(
       throw new Error(`Shop stock not found for "${productName}"`);
     }
 
-    await addStockToWarehouse(
-      tx,
-      carton.productId,
-      cartonsRemoved,
-      itemsMoved,
-      carton.id
-    );
+    await addStockToWarehouse(tx, carton, cartonsRemoved, itemsMoved);
   }
 }
 
@@ -348,7 +358,7 @@ export async function reverseSaleInTransaction(
   if (sale.type === SaleType.SHOP_TRANSFER) {
     await reverseShopTransferStock(tx, sale, options?.force);
   } else {
-    await restoreSaleStock(tx, sale.id);
+    await restoreSaleStock(tx, sale);
   }
   await clearSaleFinancials(tx, sale.id);
   await tx.saleItem.deleteMany({ where: { saleId: sale.id } });
@@ -441,7 +451,7 @@ export async function updateRetailSale(
   assertCanModifySale(session, sale);
 
   return prisma.$transaction(async (tx) => {
-    await restoreSaleStock(tx, saleId);
+    await restoreSaleStock(tx, sale);
     await clearSaleFinancials(tx, saleId);
     await tx.saleItem.deleteMany({ where: { saleId } });
 
@@ -512,10 +522,7 @@ export async function updateRetailSale(
 
       await tx.carton.update({
         where: { id: item.cartonId },
-        data: {
-          remainingCartons: carton.remainingCartons - cartonsSold,
-          remainingItems: carton.remainingItems - itemsSold - cartonsSold * carton.itemsPerCarton,
-        },
+        data: retailStockAfterSale(carton, cartonsSold, itemsSold),
       });
     }
 
@@ -530,6 +537,9 @@ export async function updateRetailSale(
       paymentStatus = "CREDIT";
     } else {
       paidAmount = data.paidAmount ?? 0;
+      if (paidAmount > totalAmount + 0.001) {
+        throw new Error("Amount paid cannot be more than the sale total");
+      }
       paymentStatus = getPaymentStatus(totalAmount, paidAmount);
     }
 
@@ -619,13 +629,26 @@ export async function updateShopTransfer(
     }[] = [];
 
     for (const item of data.items) {
-      const carton = await tx.carton.findUnique({
+      let carton = await tx.carton.findUnique({
         where: { id: item.cartonId },
         include: { product: true },
       });
       if (!carton) throw new Error(`Carton not found: ${item.cartonId}`);
       if (carton.location !== "WAREHOUSE") {
-        throw new Error("Shop transfers can only be made from warehouse inventory");
+        // The original row may have moved to the shop in full; its stock is back in a warehouse row now.
+        carton = await tx.carton.findFirst({
+          where: {
+            productId: carton.productId,
+            location: "WAREHOUSE",
+            itemsPerCarton: carton.itemsPerCarton,
+            remainingCartons: { gte: item.cartonsSold },
+          },
+          orderBy: { createdAt: "asc" },
+          include: { product: true },
+        });
+        if (!carton) {
+          throw new Error("Shop transfers can only be made from warehouse inventory");
+        }
       }
 
       const itemsMoved = item.cartonsSold * carton.itemsPerCarton;
@@ -633,7 +656,7 @@ export async function updateShopTransfer(
       totalAmount += itemTotal;
 
       saleItems.push({
-        cartonId: item.cartonId,
+        cartonId: carton.id,
         cartonsSold: item.cartonsSold,
         itemsSold: itemsMoved,
         unitPrice: item.warehouseLeavingPrice,

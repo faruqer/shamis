@@ -42,6 +42,7 @@ interface ImportRecord {
     name: string;
     unitCost?: string;
     cartons: {
+      cartonNumber: string;
       totalCartons: number;
       itemsPerCarton: number;
       remainingCartons: number;
@@ -60,6 +61,7 @@ function toImportLike(imp: ImportRecord): ImportLike {
     products: (imp.products ?? []).map((product) => ({
       unitCost: product.unitCost ?? "0",
       cartons: product.cartons.map((carton) => ({
+        cartonNumber: carton.cartonNumber,
         totalCartons: carton.totalCartons,
         itemsPerCarton: carton.itemsPerCarton,
         remainingCartons: carton.remainingCartons,

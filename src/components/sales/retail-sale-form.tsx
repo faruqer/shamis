@@ -202,6 +202,25 @@ export function RetailSaleForm({
           };
         });
 
+        // Products this sale sold out are no longer listed in inventory; add them back.
+        for (const saleItem of sale.items as {
+          cartonId: string;
+          cartonsSold: number;
+          itemsSold: number;
+          carton: { itemsPerCarton: number; product: { name: string } };
+        }[]) {
+          if (adjustedInventory.some((carton) => carton.id === saleItem.cartonId)) continue;
+          const itemsPerCarton = saleItem.carton.itemsPerCarton;
+          adjustedInventory.push({
+            id: saleItem.cartonId,
+            cartonNumber: "",
+            itemsPerCarton,
+            remainingCartons: saleItem.cartonsSold || 0,
+            remainingItems: (saleItem.cartonsSold || 0) * itemsPerCarton + (saleItem.itemsSold || 0),
+            product: { name: saleItem.carton.product.name },
+          });
+        }
+
         setInventory(adjustedInventory);
         setClientInput(sale.client?.name ?? "");
         setClientId(sale.clientId ?? "");

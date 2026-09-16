@@ -53,7 +53,7 @@ export async function buildClientCreditData(options?: {
 }) {
   const shopId = options?.shopId;
   const saleTypes = options?.saleTypes ?? ["WHOLESALE", "RETAIL"];
-  const shopItemFilter = shopId ? { items: { some: { carton: { shopId } } } } : {};
+  const shopItemFilter = shopId ? { shopId } : {};
 
   const [creditSales, creditActivity] = await Promise.all([
     prisma.sale.findMany({

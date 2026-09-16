@@ -110,13 +110,28 @@ export function ShopTransferForm({
           };
         });
 
+        // A transfer of all remaining cartons moves the row itself, so it is not in the warehouse list.
+        if (saleItem && !adjustedInventory.some((carton) => carton.id === saleItem.cartonId)) {
+          adjustedInventory.push({
+            id: saleItem.cartonId,
+            cartonNumber: saleItem.carton?.cartonNumber ?? "",
+            itemsPerCarton: saleItem.carton?.itemsPerCarton ?? 0,
+            remainingCartons: saleItem.cartonsSold,
+            remainingItems: saleItem.itemsSold,
+            product: {
+              name: saleItem.carton?.product?.name ?? "",
+              unitCost: String(saleItem.carton?.product?.unitCost ?? ""),
+            },
+          });
+        }
+
         setInventory(adjustedInventory);
         setShopId(sale.shopId ?? sale.shop?.id ?? "");
         setCartonId(saleItem?.cartonId ?? "");
         setCartonsToTransfer(saleItem?.cartonsSold ?? 1);
         setWarehouseLeavingPrice(String(parseFloat(saleItem?.unitPrice) || ""));
 
-        const warehouseCarton = warehouseData.find((c) => c.id === saleItem?.cartonId);
+        const warehouseCarton = adjustedInventory.find((c) => c.id === saleItem?.cartonId);
         const shopCarton = shopData.find(
           (c: { product: { name: string }; shop?: { id: string }; retailUnitPrice?: string | null }) =>
             c.product.name === warehouseCarton?.product.name &&

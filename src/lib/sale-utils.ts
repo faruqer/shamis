@@ -75,7 +75,16 @@ export function getRetailSaleItemCost(
   importUnitCost?: string | number | null
 ) {
   const unitCost = parseAmount(warehouseLeavingPrice ?? importUnitCost);
-  return getSaleItemQuantity(cartonsSold, itemsSold, itemsPerCarton) * unitCost;
+  return getRetailSaleItemQuantity(cartonsSold, itemsSold, itemsPerCarton) * unitCost;
+}
+
+/** Retail lines store full cartons and loose items separately, so both count. */
+export function getRetailSaleItemQuantity(
+  cartonsSold: number,
+  itemsSold: number,
+  itemsPerCarton: number
+) {
+  return cartonsSold * itemsPerCarton + itemsSold;
 }
 
 export function getSaleCost(items: SaleProfitItem[]) {

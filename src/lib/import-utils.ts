@@ -1,4 +1,5 @@
 export interface ImportCartonLike {
+  cartonNumber?: string;
   totalCartons: number;
   itemsPerCarton: number;
   remainingCartons?: number;
@@ -26,8 +27,11 @@ export interface ImportLike {
   products: ImportProductLike[];
 }
 
+/** Imported quantity lives on the original row ("1", "2"); split rows ("1-shop-…") are stock moves. */
 export function getProductTotalItems(cartons: ImportCartonLike[]) {
-  const carton = cartons[0];
+  const carton =
+    cartons.find((c) => c.cartonNumber !== undefined && !c.cartonNumber.includes("-")) ??
+    cartons[0];
   if (!carton) return 0;
   return carton.totalCartons * carton.itemsPerCarton;
 }

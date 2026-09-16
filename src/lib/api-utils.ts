@@ -16,11 +16,23 @@ export function handleApiError(error: unknown) {
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2003") {
-      return errorResponse("Your session is invalid. Please sign out and sign in again.", 401);
+      return errorResponse(
+        "This record is linked to other data (sales, payments, stock…) and cannot be changed or deleted.",
+        409
+      );
     }
     if (error.code === "P2002") {
       return errorResponse("A record with this value already exists.", 400);
     }
+    if (error.code === "P2025") {
+      return errorResponse("Record not found. It may have been changed or deleted — refresh and try again.", 404);
+    }
+    console.error(error);
+    return errorResponse("Database error. Please try again.", 500);
+  }
+  if (error instanceof Prisma.PrismaClientValidationError) {
+    console.error(error);
+    return errorResponse("Invalid data sent to the server.", 400);
   }
   if (error instanceof Error) {
     if (error.message === "Unauthorized") return errorResponse("Unauthorized", 401);
