@@ -10,7 +10,8 @@ import {
 import { jsonResponse, errorResponse, handleApiError } from "@/lib/api-utils";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  // Phones often capitalize the first letter or add a trailing space.
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 });
 

@@ -6,7 +6,7 @@ import { jsonResponse, errorResponse, handleApiError } from "@/lib/api-utils";
 import { Role } from "@prisma/client";
 
 const userUpdateSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   name: z.string().min(1),
   role: z.enum(["ADMIN", "SALESPERSON"]),
   shopId: z.string().nullable().optional(),
