@@ -225,6 +225,8 @@ model SaleItem {
   itemsSold    Int     @default(0)
   unitPrice  Decimal
   totalPrice Decimal
+  /// Cost per item when sold (import cost, or shop wholesale price for retail). Keeps past profit stable.
+  costPrice  Decimal?
   sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
   carton Carton @relation(fields: [cartonId], references: [id])
 }

@@ -166,6 +166,7 @@ function getSaleItemCostForType(
   item: {
     cartonsSold: number;
     itemsSold: number;
+    costPrice?: { toString(): string } | null;
     carton: {
       itemsPerCarton: number;
       warehouseLeavingPrice: { toString(): string } | null;
@@ -181,7 +182,7 @@ function getSaleItemCostForType(
       first.cartonsSold,
       first.itemsSold,
       first.carton.itemsPerCarton,
-      first.carton.warehouseLeavingPrice,
+      first.costPrice ?? first.carton.warehouseLeavingPrice,
       first.carton.product.unitCost
     );
   }
@@ -189,7 +190,7 @@ function getSaleItemCostForType(
     first.cartonsSold,
     first.itemsSold,
     first.carton.itemsPerCarton,
-    first.carton.product.unitCost
+    first.costPrice ?? first.carton.product.unitCost
   );
 }
 
@@ -198,6 +199,7 @@ function toProfitItems(
     cartonsSold: number;
     itemsSold: number;
     unitPrice: { toString(): string };
+    costPrice?: { toString(): string } | null;
     carton: {
       itemsPerCarton: number;
       warehouseLeavingPrice: { toString(): string } | null;
@@ -209,6 +211,7 @@ function toProfitItems(
     cartonsSold: item.cartonsSold,
     itemsSold: item.itemsSold,
     unitPrice: decimalToNumber(item.unitPrice),
+    costPrice: item.costPrice != null ? decimalToNumber(item.costPrice) : null,
     carton: {
       itemsPerCarton: item.carton.itemsPerCarton,
       warehouseLeavingPrice: item.carton.warehouseLeavingPrice

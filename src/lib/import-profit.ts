@@ -7,6 +7,7 @@ function toProfitItem(item: {
   cartonsSold: number;
   itemsSold: number;
   unitPrice: { toString(): string };
+  costPrice: { toString(): string } | null;
   carton: {
     itemsPerCarton: number;
     warehouseLeavingPrice: { toString(): string } | null;
@@ -17,6 +18,7 @@ function toProfitItem(item: {
     cartonsSold: item.cartonsSold,
     itemsSold: item.itemsSold,
     unitPrice: decimalToNumber(item.unitPrice),
+    costPrice: item.costPrice != null ? decimalToNumber(item.costPrice) : null,
     carton: {
       itemsPerCarton: item.carton.itemsPerCarton,
       warehouseLeavingPrice: item.carton.warehouseLeavingPrice
@@ -37,6 +39,7 @@ export async function getImportProfitByImportId() {
       itemsSold: true,
       unitPrice: true,
       totalPrice: true,
+      costPrice: true,
       sale: { select: { type: true } },
       carton: {
         select: {

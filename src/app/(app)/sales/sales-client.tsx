@@ -59,6 +59,7 @@ interface SaleRecord {
     itemsSold: number;
     unitPrice?: number | string;
     totalPrice?: number | string;
+    costPrice?: number | string | null;
     carton: {
       itemsPerCarton: number;
       warehouseLeavingPrice?: number | string | null;

@@ -7,6 +7,7 @@ type SaleItemCreate = {
   itemsSold: number;
   unitPrice: number;
   totalPrice: number;
+  costPrice?: number;
 };
 
 export function buildSaleCreateData(input: {

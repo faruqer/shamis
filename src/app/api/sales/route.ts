@@ -80,6 +80,7 @@ type SaleListRecord = Awaited<ReturnType<typeof prisma.sale.findMany>>[number] &
     itemsSold: number;
     unitPrice: { toString(): string };
     totalPrice: { toString(): string };
+    costPrice?: { toString(): string } | null;
     carton: {
       itemsPerCarton: number;
       warehouseLeavingPrice?: { toString(): string } | null;
@@ -106,6 +107,7 @@ function serializeSaleListRecord(sale: SaleListRecord) {
       ...item,
       unitPrice: decimalToNumber(item.unitPrice),
       totalPrice: decimalToNumber(item.totalPrice),
+      costPrice: item.costPrice != null ? decimalToNumber(item.costPrice) : null,
       carton: {
         ...item.carton,
         warehouseLeavingPrice:
@@ -178,6 +180,7 @@ export async function GET(request: NextRequest) {
           ...serialized,
           items: serialized.items.map((item) => ({
             ...item,
+            costPrice: undefined, // cost is admin-only
             carton: {
               itemsPerCarton: item.carton.itemsPerCarton,
               product: { name: item.carton.product.name },
@@ -237,6 +240,7 @@ export async function POST(request: NextRequest) {
         itemsSold: number;
         unitPrice: number;
         totalPrice: number;
+        costPrice: number;
       }[] = [];
 
       if (data.type === "SHOP_TRANSFER") {
@@ -260,6 +264,7 @@ export async function POST(request: NextRequest) {
             itemsSold: itemsMoved,
             unitPrice: item.warehouseLeavingPrice,
             totalPrice: itemTotal,
+            costPrice: decimalToNumber(carton.product.unitCost),
           });
 
           await transferStockToShop(
@@ -415,6 +420,10 @@ export async function POST(request: NextRequest) {
           itemsSold,
           unitPrice: item.unitPrice,
           totalPrice: itemTotal,
+          costPrice:
+            data.type === "RETAIL"
+              ? decimalToNumber(carton.warehouseLeavingPrice)
+              : decimalToNumber(carton.product.unitCost),
         });
 
         if (data.type === "RETAIL") {

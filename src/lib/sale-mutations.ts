@@ -470,6 +470,7 @@ export async function updateRetailSale(
       itemsSold: number;
       unitPrice: number;
       totalPrice: number;
+      costPrice: number;
     }[] = [];
 
     for (const item of data.items) {
@@ -516,6 +517,7 @@ export async function updateRetailSale(
         itemsSold,
         unitPrice: item.unitPrice,
         totalPrice: itemTotal,
+        costPrice: wholesaleUnit,
       });
 
       if (carton.shopId) retailShopId = carton.shopId;
@@ -626,6 +628,7 @@ export async function updateShopTransfer(
       itemsSold: number;
       unitPrice: number;
       totalPrice: number;
+      costPrice: number;
     }[] = [];
 
     for (const item of data.items) {
@@ -661,6 +664,7 @@ export async function updateShopTransfer(
         itemsSold: itemsMoved,
         unitPrice: item.warehouseLeavingPrice,
         totalPrice: itemTotal,
+        costPrice: decimalToNumber(carton.product.unitCost),
       });
 
       await transferStockToShop(
@@ -736,6 +740,7 @@ export async function getSaleById(session: SessionUser, saleId: string) {
       saleDateEthiopian: ensureSaleDateEthiopian(sale.saleDate, sale.saleDateEthiopian),
       items: sale.items.map((item) => ({
         ...item,
+        costPrice: undefined, // cost is admin-only
         carton: {
           id: item.carton.id,
           itemsPerCarton: item.carton.itemsPerCarton,

@@ -43,6 +43,8 @@ export interface SaleProfitItem {
   cartonsSold: number;
   itemsSold: number;
   unitPrice?: number | string;
+  /** Cost per item recorded when the sale was made; older sales fall back to current prices. */
+  costPrice?: number | string | null;
   carton: {
     itemsPerCarton: number;
     warehouseLeavingPrice?: number | string | null;
@@ -95,7 +97,7 @@ export function getSaleCost(items: SaleProfitItem[]) {
         item.cartonsSold,
         item.itemsSold,
         item.carton.itemsPerCarton,
-        item.carton.product.unitCost
+        item.costPrice ?? item.carton.product.unitCost
       ),
     0
   );
@@ -109,7 +111,7 @@ export function getRetailSaleCost(items: SaleProfitItem[]) {
         item.cartonsSold,
         item.itemsSold,
         item.carton.itemsPerCarton,
-        item.carton.warehouseLeavingPrice,
+        item.costPrice ?? item.carton.warehouseLeavingPrice,
         item.carton.product.unitCost
       ),
     0

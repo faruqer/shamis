@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+// Sale dates, "today" and report days are computed on the server in local time.
+// Pin it to Ethiopia so a server running on UTC doesn't shift late-night sales to another day.
+process.env.TZ = process.env.TZ || "Africa/Addis_Ababa";
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const withPWA = require("next-pwa")({
   dest: "public",
@@ -25,8 +29,7 @@ const withPWA = require("next-pwa")({
   ],
 });
 
-const nextConfig: NextConfig = {
-  output: "standalone",
-};
+// The server runs `next start` under PM2, so no standalone build (that was for the old Docker setup).
+const nextConfig: NextConfig = {};
 
 export default withPWA(nextConfig);

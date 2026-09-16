@@ -7,6 +7,11 @@ const publicPaths = ["/login", "/api/auth/login"];
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // The app has no server actions; these requests are bots probing for exploits.
+  if (request.headers.has("next-action")) {
+    return new NextResponse(null, { status: 404 });
+  }
+
   if (publicPaths.some((path) => pathname.startsWith(path))) {
     return NextResponse.next();
   }
