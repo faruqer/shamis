@@ -4,6 +4,25 @@ import { verifyToken } from "@/lib/auth-edge";
 
 const publicPaths = ["/login", "/api/auth/login"];
 
+function withSecurityHeaders(response: NextResponse, request: NextRequest) {
+  const headers = response.headers;
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set("X-DNS-Prefetch-Control", "off");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+
+  // Only over HTTPS: once sent, browsers refuse plain http to this host for a year.
+  const isHttps =
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https" ||
+    request.nextUrl.protocol === "https:";
+  if (process.env.HSTS === "true" && isHttps) {
+    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -12,33 +31,25 @@ export async function middleware(request: NextRequest) {
     return new NextResponse(null, { status: 404 });
   }
 
-  if (publicPaths.some((path) => pathname.startsWith(path))) {
-    return NextResponse.next();
-  }
-
-  if (pathname.startsWith("/api/")) {
-    const token = request.cookies.get("session")?.value;
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const session = await verifyToken(token);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    return NextResponse.next();
+  // Login throttling lives in the login route itself (per account and per IP).
+  if (pathname === "/api/health" || publicPaths.some((path) => pathname.startsWith(path))) {
+    return withSecurityHeaders(NextResponse.next(), request);
   }
 
   const token = request.cookies.get("session")?.value;
-  if (!token) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
+  const session = token ? await verifyToken(token) : null;
 
-  const session = await verifyToken(token);
   if (!session) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    if (pathname.startsWith("/api/")) {
+      return withSecurityHeaders(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+        request
+      );
+    }
+    return withSecurityHeaders(NextResponse.redirect(new URL("/login", request.url)), request);
   }
 
-  return NextResponse.next();
+  return withSecurityHeaders(NextResponse.next(), request);
 }
 
 export const config = {

@@ -48,3 +48,11 @@ next-env.d.ts
 # prisma data
 /prisma/*.db
 /data
+
+# runtime data
+/backups
+/logs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

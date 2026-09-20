@@ -23,6 +23,8 @@
     "db:reset:sales": "tsx scripts/reset-sales.ts",
     "db:repair:stock": "tsx scripts/repair-stock.ts",
     "db:check:login": "tsx scripts/check-login.ts",
+    "db:backup": "tsx scripts/db-maintenance.ts backup",
+    "db:optimize": "tsx scripts/db-maintenance.ts optimize",
     "db:cleanup:shop": "tsx scripts/cleanup-shop.ts",
     "db:clean:server": "tsx scripts/clean-for-server.ts",
     "db:clear": "tsx scripts/db-clear.ts",
