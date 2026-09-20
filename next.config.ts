@@ -29,7 +29,24 @@ const withPWA = require("next-pwa")({
   ],
 });
 
+// The app is often reached over plain http on the local network, where a Strict-Transport-Security
+// header would lock that out after the first https visit. Opt in with HSTS=true when served over TLS.
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
+  ...(process.env.HSTS === "true"
+    ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]
+    : []),
+];
+
 // The server runs `next start` under PM2, so no standalone build (that was for the old Docker setup).
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
+};
 
 export default withPWA(nextConfig);

@@ -1,4 +1,4 @@
-import { LedgerType, Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { generateSaleNumber } from "@/lib/utils";
 
 type Tx = Prisma.TransactionClient;

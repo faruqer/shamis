@@ -37,6 +37,21 @@ export function handleApiError(error: unknown) {
   if (error instanceof Error) {
     if (error.message === "Unauthorized") return errorResponse("Unauthorized", 401);
     if (error.message === "Forbidden") return errorResponse("Forbidden", 403);
+    // Routes throw plain Errors carrying user-facing rule messages ("Not enough stock"),
+    // so those are echoed back. These subclasses are never intentional — they mean a bug,
+    // and their messages expose internals, so log them and answer generically.
+    // A malformed JSON body reaches here as a SyntaxError from request.json() — a client error.
+    if (error instanceof SyntaxError) {
+      return errorResponse("Invalid request body.", 400);
+    }
+    if (
+      error instanceof TypeError ||
+      error instanceof ReferenceError ||
+      error instanceof RangeError
+    ) {
+      console.error(error);
+      return errorResponse("Something went wrong. Please try again.", 500);
+    }
     return errorResponse(error.message, 400);
   }
   return errorResponse("Internal server error", 500);
