@@ -1,59 +1,93 @@
 # Deploying Stock & Money with PM2
 
-Server layout used in these steps: the app lives in `/home/faruqer/shamis` and runs on port 3000.
+From an empty Ubuntu server to a running app. These steps use the folder
+`/home/faruqer/shamis` and port 3000 — change them if yours differ.
 
-## 1. Requirements (once)
+## 1. Server preparation (once)
 
 ```bash
-node -v            # 18 or newer
-npm i -g pm2
+sudo apt update && sudo apt install -y git curl sqlite3
+
+# Node.js 20 LTS
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v                       # v20.x
+
+sudo npm i -g pm2
+```
+
+Set the server clock to Ethiopian time (the app also pins its own time zone, so this is
+only for logs and cron):
+
+```bash
+sudo timedatectl set-timezone Africa/Addis_Ababa
 ```
 
 ## 2. Get the code
 
 ```bash
-cd /home/faruqer/shamis
-git pull
-npm ci             # not --production: the maintenance scripts need tsx
+cd /home/faruqer
+git clone <your-repo-url> shamis
+cd shamis
+npm ci                        # not --production: the maintenance scripts need tsx
+mkdir -p logs backups
 ```
 
-## 3. Configure `.env`
+## 3. Create `.env`
 
-`.env` sits in `/home/faruqer/shamis/.env` and is never committed.
+```bash
+nano /home/faruqer/shamis/.env
+```
 
 ```env
 DATABASE_URL="file:/home/faruqer/shamis/prisma/dev.db"
-JWT_SECRET="<paste the generated value>"
+JWT_SECRET="<paste the value generated below>"
 ```
-
-Generate the secret:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-The app refuses to start in production with a missing, short or example secret. Changing it logs everyone out.
+Use the absolute path for `DATABASE_URL`. A relative path is resolved from the `prisma/`
+folder, which is easy to get wrong. The app refuses to start in production with a missing,
+short or example `JWT_SECRET`. Add `HSTS=true` only after HTTPS works.
 
-Add `HSTS=true` only once the app is served over HTTPS.
+## 4. Set up the database
 
-## 4. Put the database in place
-
-```bash
-pm2 stop shamis 2>/dev/null
-cp /path/to/backup.db prisma/dev.db     # skip if the database is already there
-npx prisma db push --skip-generate      # creates/updates tables, keeps data
-npm run db:optimize                     # WAL mode: avoids "database is locked"
-npm run db:repair:stock                 # preview stock repairs
-npm run db:repair:stock -- --apply      # apply them
-```
-
-Check the database the app will actually use:
+Create the tables and turn on WAL mode (WAL prevents "database is locked" when several
+people use the app at once):
 
 ```bash
-npm run db:check:login -- admin@stockmoney.com "the-password"
+cd /home/faruqer/shamis
+npx prisma db push --skip-generate
+npm run db:optimize
 ```
 
-It prints the file path, how many users/imports/sales it holds, and whether the password matches.
+**A. Restoring your existing data:**
+
+```bash
+cp /path/to/backup.db prisma/dev.db
+npx prisma db push --skip-generate       # adds any new columns, keeps data
+npm run db:optimize
+npm run db:repair:stock                  # preview stock repairs
+npm run db:repair:stock -- --apply       # apply them
+```
+
+**B. Starting fresh:** create the owner account (choose your own password):
+
+```bash
+NODE_ENV=production ADMIN_EMAIL="owner@shamis.com" ADMIN_PASSWORD="<strong-password>" \
+  ADMIN_NAME="Shemsi" npm run db:seed:admin
+```
+
+Then confirm the app will see what you expect:
+
+```bash
+npm run db:check:login -- owner@shamis.com "<strong-password>"
+```
+
+It prints the database file, how many users/imports/sales it holds, and whether the
+password matches.
 
 ## 5. Build
 
@@ -61,79 +95,122 @@ It prints the file path, how many users/imports/sales it holds, and whether the 
 npm run build
 ```
 
+### On a 1 GB server
+
+`npm ci` and `next build` both need more memory than 1 GB alone provides — the server looks
+"stuck" while it swaps or the process gets killed. Add swap once, then build in low-memory
+mode:
+
+```bash
+# 2 GB swap file (once, survives reboots)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h                      # Swap: 2.0Gi
+
+# install and build with less memory
+npm ci --no-audit --no-fund --prefer-offline
+pm2 stop shamis 2>/dev/null  # free the running app's memory while building
+LOW_MEMORY=true NODE_OPTIONS=--max-old-space-size=640 npm run build
+pm2 start shamis
+```
+
+`LOW_MEMORY=true` builds with a single worker: slower (a few minutes), but it fits. Check
+for an out-of-memory kill with `dmesg | tail -20` or `journalctl -k | grep -i oom`.
+
+Running the app afterwards is comfortable on 1 GB — it uses roughly 150–250 MB.
+
 ## 6. Start under PM2
 
 ```bash
 pm2 start ecosystem.config.js
 pm2 save
-pm2 startup          # run the command it prints, so the app survives a reboot
+pm2 startup                   # run the command it prints, so it restarts after a reboot
 ```
 
-This starts two processes:
+Two processes start:
 
 | Process | What it does |
 |---|---|
-| `shamis` | the app, port 3000, single instance (SQLite has one writer) |
-| `shamis-backup` | database backup every night at 02:00 into `backups/`, keeps the last 30 |
+| `shamis` | the app on port 3000, single instance (SQLite allows one writer) |
+| `shamis-backup` | nightly backup at 02:00 into `backups/`, keeps the last 30 |
 
 Check it:
 
 ```bash
 pm2 status
-curl http://localhost:3000/api/health     # {"status":"ok", ...}
+curl http://localhost:3000/api/health      # {"status":"ok", ...}
 pm2 logs shamis --lines 50
 ```
 
-## 7. Updating later
+## 7. Open the port
+
+```bash
+sudo ufw allow 3000/tcp
+sudo ufw enable
+```
+
+Open `http://YOUR_SERVER_IP:3000` and log in. Also open the cloud provider's firewall if
+there is one.
+
+## 8. Updating later
 
 ```bash
 cd /home/faruqer/shamis
-npm run db:backup            # backup first
+npm run db:backup             # always back up first
 git pull
 npm ci
+npx prisma db push --skip-generate
 npm run build
 pm2 restart shamis --update-env
 ```
 
-`--update-env` matters: a plain `pm2 restart` keeps the environment the app was first started with, so `.env` changes are ignored without it.
+`--update-env` matters: a plain `pm2 restart` keeps the environment the app first started
+with, so `.env` changes are ignored without it.
 
 ## Day-to-day commands
 
 | Task | Command |
 |---|---|
 | Backup now | `npm run db:backup` |
-| Restore a backup | `pm2 stop shamis` → copy the file over `prisma/dev.db` → `pm2 start shamis` |
+| Restore a backup | `pm2 stop shamis` → copy over `prisma/dev.db` → delete `dev.db-wal`/`dev.db-shm` → `pm2 start shamis` |
 | Compact the database | `npm run db:optimize` |
 | Check/repair stock rows | `npm run db:repair:stock` (add `-- --apply`) |
 | Diagnose a failed login | `npm run db:check:login -- <email> "<password>"` |
 | Reset a password | `npm run db:check:login -- <email> --reset "<new-password>"` |
 | Logs | `pm2 logs shamis`, or `logs/app.log` and `logs/error.log` |
 
-Restoring: stop the app first, and also delete any `dev.db-wal` and `dev.db-shm` files next to the database before starting again.
-
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| "Invalid email or password" with correct details | The app is on the wrong database file. Run `npm run db:check:login` and compare the path with `DATABASE_URL`. |
-| "The table `main.User` does not exist" | Same cause: the file is empty or missing. Put the backup at the `DATABASE_URL` path, then `npx prisma db push --skip-generate`. |
+| "Invalid email or password" with correct details | The app is on the wrong database file. Run `npm run db:check:login` and compare its path with `DATABASE_URL`. |
+| "The table `main.User` does not exist" | Same cause: an empty or missing file. Put the backup at the `DATABASE_URL` path, then `npx prisma db push --skip-generate`. |
 | "JWT_SECRET is missing or insecure" in the logs | Set a real secret in `.env`, then `pm2 restart shamis --update-env`. |
-| "Too many login attempts" | 10 failed tries per account or 30 per IP within 5 minutes. It clears itself, or restart the app. |
-| `.env` changes seem ignored | `pm2 restart shamis --update-env`. |
-| "database is locked" | `npm run db:optimize` (enables WAL), and keep `instances: 1` in the PM2 config. |
+| "Too many login attempts" | 10 failed tries per account, or 30 per IP, in 5 minutes. It clears itself; a restart also clears it. |
+| `.env` changes ignored | `pm2 restart shamis --update-env`. |
+| "database is locked" | `npm run db:optimize`, and keep `instances: 1` in the PM2 config. |
+| Bot errors about "Server Reference ID" | Harmless scanners; the app already answers them with 404. |
 
-## Behind nginx (optional)
-
-For a domain or HTTPS, put nginx in front and forward to port 3000. It must pass the real client address, otherwise all users share one rate-limit bucket:
+## Behind nginx (optional, for a domain or HTTPS)
 
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 ```
 
-With HTTPS working, add `HSTS=true` to `.env` and restart.
+The forwarded headers matter: without them every user shares one rate-limit bucket. For
+HTTPS use `sudo certbot --nginx -d your-domain.com`, then add `HSTS=true` to `.env`,
+close port 3000 (`sudo ufw delete allow 3000/tcp`) and restart the app.

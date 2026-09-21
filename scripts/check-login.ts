@@ -33,9 +33,13 @@ async function main() {
   for (const user of users) {
     console.log(`  ${JSON.stringify(user.email)}  ${user.role}  ${user.isActive ? "active" : "INACTIVE"}`);
   }
-  if (users.length === 0 || imports === 0) {
-    console.log("\n>> This looks like an EMPTY database. The app is not using your backup file.");
-    console.log(">> Set DATABASE_URL in .env to the absolute path of the backup, then pm2 restart.");
+  if (users.length === 0) {
+    console.log("\n>> This database has NO USERS, so every login fails.");
+    console.log(">> Either it is not your backup (check DATABASE_URL in .env), or this is a fresh");
+    console.log(">> install and the admin account still has to be created (npm run db:seed:admin).");
+  } else if (imports === 0 && sales === 0) {
+    console.log("\n>> Note: users exist but there is no business data — this looks like a fresh install.");
+    console.log(">> If you expected your data here, check that DATABASE_URL points at your backup.");
   }
 
   if (!emailArg) return;

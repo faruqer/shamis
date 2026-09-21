@@ -44,6 +44,8 @@ const securityHeaders = [
 // The server runs `next start` under PM2, so no standalone build (that was for the old Docker setup).
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // LOW_MEMORY=true builds with a single worker — slower, but survives a 1 GB server.
+  ...(process.env.LOW_MEMORY === "true" ? { experimental: { cpus: 1, workerThreads: false } } : {}),
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
