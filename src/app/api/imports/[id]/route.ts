@@ -245,6 +245,14 @@ async function mergeImportProducts(
           `Cannot change cartons for "${product.name}" after its stock was moved to a shop in full. Only the name and cost can be edited.`
         );
       }
+
+      // Past sales recorded their items at the old carton size, so changing it now would
+      // leave the import total and the sold total counting in different units.
+      if (product.itemsPerCarton !== carton.itemsPerCarton && productHasSales(existing)) {
+        throw new Error(
+          `Cannot change items per carton for "${product.name}" after it has been sold or transferred — its past sales were recorded at ${carton.itemsPerCarton} items per carton. Correct the carton count instead, or reverse the sales first.`
+        );
+      }
       const newRemainingCartons = carton.remainingCartons + cartonDelta;
       const looseItems = Math.max(
         0,

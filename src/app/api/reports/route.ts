@@ -639,7 +639,8 @@ export async function GET(request: Request) {
         id: bank.id,
         name: bank.name,
         isActive: bank.isActive,
-        balance: totalsByBank.get(bank.id)?.balance ?? 0,
+        balance:
+          decimalToNumber(bank.openingBalance) + (totalsByBank.get(bank.id)?.balance ?? 0),
         paymentCount: totalsByBank.get(bank.id)?.paymentCount ?? 0,
       }));
 

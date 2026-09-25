@@ -248,8 +248,8 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                   transition={{ delay: index * 0.05 }}
                 >
                   <Card hover>
-                    <CardHeader className="flex flex-row items-start justify-between gap-4">
-                      <div className="flex-1">
+                    <CardHeader className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                      <div className="min-w-0 flex-1">
                         <CardTitle className="flex items-center gap-2 flex-wrap">
                           Batch {imp.batchNumber}
                           <Badge variant="primary">{imp.products?.length ?? 0} products</Badge>
@@ -269,9 +269,9 @@ export function ImportsPageClient({ user }: { user: { name: string; role: Role; 
                           Imported {formatDate(imp.importDate)} by {imp.createdBy.name}
                         </p>
                       </div>
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-start justify-between gap-3 sm:justify-start">
                         {isAdmin && (
-                          <div className="text-right">
+                          <div className="sm:text-right">
                             <p className="text-xl font-bold text-primary">{formatCurrency(totalValue)}</p>
                             <p className="text-xs text-muted-foreground">Total value</p>
                             <p

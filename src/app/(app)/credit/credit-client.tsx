@@ -1,39 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { Wallet, Users, CreditCard, Send } from "lucide-react";
+import { Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/layout/page-transition";
 import { formatCurrency } from "@/lib/utils";
-import { creditToOwnerLabel, handoverToOwnerLabel, OWNER_NAME } from "@/lib/brand";
 import { Role } from "@prisma/client";
 import { ClientCreditSection } from "@/components/credit/client-credit-section";
-import { HandoverModal } from "@/components/credit/handover-modal";
 import { ClientCreditHistoryEntry, ClientCreditSale } from "@/components/credit/client-credit-modal";
 
-interface CreditData {
+interface CustomerCreditData {
   shopName?: string | null;
-  ownerCredit: number;
   clientCredit: number;
-  totalCredit: number;
   clientBalances: { clientId: string; clientName: string; amount: number }[];
   creditSales: ClientCreditSale[];
   creditHistory: ClientCreditHistoryEntry[];
 }
 
+/**
+ * What customers owe this shop. Credit the salesperson owes the owner lives on
+ * the Balance page instead, so this page is only about money coming in.
+ */
 export function CreditClient({
   user,
 }: {
   user: { name: string; role: Role; email: string; shopName?: string | null };
 }) {
-  const [data, setData] = useState<CreditData | null>(null);
+  const [data, setData] = useState<CustomerCreditData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showHandover, setShowHandover] = useState(false);
 
   const loadCreditData = useCallback((silent = false) => {
     if (!silent) {
@@ -44,13 +41,13 @@ export function CreditClient({
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || "Failed to load credit");
+          throw new Error(body.error || "Failed to load customer credit");
         }
         return res.json();
       })
       .then(setData)
       .catch((err: Error) => {
-        setError(err instanceof Error ? err.message : "Failed to load credit");
+        setError(err instanceof Error ? err.message : "Failed to load customer credit");
       })
       .finally(() => {
         if (!silent) setLoading(false);
@@ -63,7 +60,7 @@ export function CreditClient({
 
   if (loading) {
     return (
-      <DashboardLayout user={user} title="Credit">
+      <DashboardLayout user={user} title="Customer Credit">
         <LoadingSpinner />
       </DashboardLayout>
     );
@@ -71,8 +68,8 @@ export function CreditClient({
 
   if (error) {
     return (
-      <DashboardLayout user={user} title="Credit">
-        <p className="text-sm text-destructive text-center py-8">{error}</p>
+      <DashboardLayout user={user} title="Customer Credit">
+        <p className="py-8 text-center text-sm text-destructive">{error}</p>
       </DashboardLayout>
     );
   }
@@ -82,75 +79,33 @@ export function CreditClient({
   return (
     <DashboardLayout
       user={user}
-      title="Credit"
+      title="Customer Credit"
       description={
         data.shopName
-          ? `${data.shopName} · all credits owed to ${OWNER_NAME} and from clients`
-          : "Track all shop credits"
+          ? `${data.shopName} · what customers owe you`
+          : "What customers owe you"
       }
     >
-      <div className="grid gap-4 sm:grid-cols-3 mb-6">
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <StatCard
           compact
-          title={creditToOwnerLabel()}
-          value={formatCurrency(data.ownerCredit)}
-          icon={<Wallet className="h-4 w-4" />}
-          delay={0}
-          valueClassName={data.ownerCredit > 0 ? "text-warning" : undefined}
-        />
-        <StatCard
-          compact
-          title="Client Credit"
+          title="Customer Credit"
           value={formatCurrency(data.clientCredit)}
           icon={<Users className="h-4 w-4" />}
-          delay={0.05}
+          delay={0}
           valueClassName={data.clientCredit > 0 ? "text-success" : undefined}
-        />
-        <StatCard
-          compact
-          title="Total Credit"
-          value={formatCurrency(data.totalCredit)}
-          icon={<CreditCard className="h-4 w-4" />}
-          delay={0.1}
         />
       </div>
 
-      {data.ownerCredit > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6"
-        >
-          <Card hover className="border-[#ddd0b8] bg-[#faf6ee] border-l-4 border-l-warning">
-            <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="font-semibold">{handoverToOwnerLabel()}</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  You owe {OWNER_NAME} {formatCurrency(data.ownerCredit)} from collections and shop stock.
-                  Record here after you send the money.
-                </p>
-              </div>
-              <Button onClick={() => setShowHandover(true)} className="shrink-0">
-                <Send className="h-4 w-4" />
-                {handoverToOwnerLabel()}
-              </Button>
-            </CardContent>
-          </Card>
-        </motion.div>
+      {data.clientCredit === 0 && data.clientBalances.length === 0 && (
+        <Card className="mb-6">
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            No customer has taken credit yet. Unpaid retail sales will show up here.
+          </CardContent>
+        </Card>
       )}
 
-      <ClientCreditSection
-        data={data}
-        includeOwnerHistory
-        onPaymentSuccess={() => loadCreditData(true)}
-      />
-
-      <HandoverModal
-        open={showHandover}
-        onClose={() => setShowHandover(false)}
-        owedToOwner={data.ownerCredit}
-        onSuccess={() => loadCreditData(true)}
-      />
+      <ClientCreditSection data={data} onPaymentSuccess={() => loadCreditData(true)} />
     </DashboardLayout>
   );
 }

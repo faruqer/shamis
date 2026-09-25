@@ -31,14 +31,14 @@ export function ClientsClient({ user }: { user: { name: string; role: Role; emai
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || "Failed to load clients");
+          throw new Error(body.error || "Failed to load customer credit");
         }
         return res.json();
       })
       .then(setData)
       .catch((err: Error) => {
         setData(null);
-        setError(err.message || "Failed to load clients");
+        setError(err.message || "Failed to load customer credit");
       })
       .finally(() => {
         if (!silent) setLoading(false);
@@ -52,8 +52,8 @@ export function ClientsClient({ user }: { user: { name: string; role: Role; emai
   return (
     <DashboardLayout
       user={user}
-      title="Clients"
-      description="Client credit balances, unpaid sales, and payment history"
+      title="Customer Credit"
+      description="Customer credit balances, unpaid sales, and payment history"
     >
       {loading ? (
         <LoadingSpinner />
@@ -64,7 +64,7 @@ export function ClientsClient({ user }: { user: { name: string; role: Role; emai
           <div className="grid gap-4 sm:grid-cols-3 mb-6">
             <StatCard
               compact
-              title="Client Credit"
+              title="Customer Credit"
               value={formatCurrency(data.clientCredit)}
               icon={<Users className="h-4 w-4" />}
               delay={0}

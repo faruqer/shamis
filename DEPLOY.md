@@ -155,6 +155,54 @@ sudo ufw enable
 Open `http://YOUR_SERVER_IP:3000` and log in. Also open the cloud provider's firewall if
 there is one.
 
+## 7b. Serving on port 80
+
+Ubuntu only lets root open ports below 1024, so pick one of these.
+
+**A. nginx in front (recommended — also the path to HTTPS later)**
+
+```bash
+sudo apt install -y nginx
+sudo tee /etc/nginx/sites-available/shamis > /dev/null <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/shamis /etc/nginx/sites-enabled/shamis
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+In `.env`, keep the app private behind nginx:
+
+```env
+PORT=3000
+HOST=127.0.0.1
+```
+
+Then `pm2 delete shamis; pm2 start ecosystem.config.js; pm2 save`, and in the firewall
+`sudo ufw allow 'Nginx HTTP'` and `sudo ufw delete allow 3000/tcp`.
+
+**B. Node directly on port 80**
+
+```bash
+sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(which node)")"
+```
+
+`.env`: `PORT=80`, then `pm2 delete shamis; pm2 start ecosystem.config.js; pm2 save` and
+`sudo ufw allow 80/tcp`. Re-run the `setcap` line after every Node.js upgrade, otherwise
+the app fails with `EACCES: permission denied 0.0.0.0:80`.
+
 ## 8. Updating later
 
 ```bash

@@ -8,6 +8,8 @@ import { Role } from "@prisma/client";
 const bankSchema = z.object({
   name: z.string().min(1),
   isActive: z.boolean().optional(),
+  /** Starting balance. A new account has no movements, so this is its balance. */
+  balance: z.number().finite().optional(),
 });
 
 export async function GET() {
@@ -33,6 +35,7 @@ export async function POST(request: NextRequest) {
       data: {
         name: data.name.trim(),
         isActive: data.isActive ?? true,
+        openingBalance: data.balance ?? 0,
       },
     });
 

@@ -251,6 +251,11 @@ model BankAccount {
   id        String   @id @default(cuid())
   name      String   @unique
   isActive  Boolean  @default(true)
+  /// Money in the account that no payment, expense or transfer accounts for:
+  /// the balance before this system started tracking, plus any later manual
+  /// correction. The shown balance is this plus the recorded movements, so an
+  /// admin can set the balance without rewriting payment history.
+  openingBalance Decimal @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

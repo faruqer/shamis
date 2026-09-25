@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Plus, UserCog, Store, Pencil, Trash2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
+import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +15,6 @@ import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition";
 import { Role } from "@prisma/client";
-import { cn } from "@/lib/utils";
 import { OWNER_NAME } from "@/lib/brand";
 
 interface UserRecord {
@@ -245,34 +245,14 @@ export function ShopsAndUsersClient({ user }: { user: { id: string; name: string
         </Button>
       }
     >
-      <div className="mb-6 flex gap-2">
-        <button
-          type="button"
-          onClick={() => setTab("shops")}
-          className={cn(
-            "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all",
-            tab === "shops"
-              ? "bg-primary text-primary-foreground shadow-md shadow-primary/25"
-              : "border border-border bg-card hover:bg-secondary"
-          )}
-        >
-          <Store className="h-4 w-4" />
-          Shops ({shops.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("users")}
-          className={cn(
-            "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all",
-            tab === "users"
-              ? "bg-primary text-primary-foreground shadow-md shadow-primary/25"
-              : "border border-border bg-card hover:bg-secondary"
-          )}
-        >
-          <UserCog className="h-4 w-4" />
-          Users ({users.length})
-        </button>
-      </div>
+      <Tabs
+        tabs={[
+          { key: "shops", label: `Shops (${shops.length})`, icon: <Store className="h-4 w-4" /> },
+          { key: "users", label: `Users (${users.length})`, icon: <UserCog className="h-4 w-4" /> },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
       {loading ? (
         <LoadingSpinner />

@@ -1,11 +1,15 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { Role } from "@prisma/client";
-import { LedgerClient } from "../ledger/ledger-client";
+import { LoadingSpinner } from "@/components/layout/page-transition";
+import { BalanceClient } from "./balance-client";
 
 export default async function BalancePage() {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (session.role !== Role.ADMIN) redirect("/credit");
-  return <LedgerClient user={session} />;
+  return (
+    <Suspense fallback={<LoadingSpinner />}>
+      <BalanceClient user={session} />
+    </Suspense>
+  );
 }

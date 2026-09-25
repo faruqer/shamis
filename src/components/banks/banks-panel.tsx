@@ -19,6 +19,9 @@ interface BankRecord {
   isActive: boolean;
   balance?: number;
   paymentCount?: number;
+  /** Net of payments, expenses and transfers, without the opening balance. */
+  movements?: number;
+  openingBalance?: number;
 }
 
 interface BanksPanelProps {
@@ -38,6 +41,7 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
   const [editingBank, setEditingBank] = useState<BankRecord | null>(null);
   const [bankName, setBankName] = useState("");
   const [bankActive, setBankActive] = useState(true);
+  const [bankBalance, setBankBalance] = useState("");
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferError, setTransferError] = useState("");
@@ -50,10 +54,18 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
     setLoading(true);
     Promise.all([fetch("/api/banks/balances").then((r) => r.json()), fetch("/api/banks").then((r) => r.json())])
       .then(([balanceData, banksData]) => {
-        const balanceMap = new Map<string, { balance: number; paymentCount: number }>(
+        const balanceMap = new Map<
+          string,
+          { balance: number; paymentCount: number; movements: number; openingBalance: number }
+        >(
           (balanceData.banks ?? []).map((b: BankRecord) => [
             b.id,
-            { balance: b.balance ?? 0, paymentCount: b.paymentCount ?? 0 },
+            {
+              balance: b.balance ?? 0,
+              paymentCount: b.paymentCount ?? 0,
+              movements: b.movements ?? 0,
+              openingBalance: b.openingBalance ?? 0,
+            },
           ])
         );
 
@@ -61,6 +73,8 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
           ...bank,
           balance: balanceMap.get(bank.id)?.balance ?? 0,
           paymentCount: balanceMap.get(bank.id)?.paymentCount ?? 0,
+          movements: balanceMap.get(bank.id)?.movements ?? 0,
+          openingBalance: balanceMap.get(bank.id)?.openingBalance ?? 0,
         }));
 
         setBanks(merged);
@@ -80,6 +94,7 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
   function resetForm() {
     setBankName("");
     setBankActive(true);
+    setBankBalance("");
     setEditingBank(null);
     setError("");
   }
@@ -93,6 +108,7 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
     setEditingBank(bank);
     setBankName(bank.name);
     setBankActive(bank.isActive);
+    setBankBalance(String(bank.balance ?? 0));
     setError("");
     setModalOpen(true);
   }
@@ -103,7 +119,23 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
     setError("");
 
     try {
-      const payload = { name: bankName.trim(), isActive: bankActive };
+      const trimmedBalance = bankBalance.trim();
+      const parsedBalance = trimmedBalance === "" ? null : Number(trimmedBalance);
+      if (parsedBalance !== null && !Number.isFinite(parsedBalance)) {
+        throw new Error("Enter a valid balance");
+      }
+
+      // Only send `balance` when it differs from what is on screen, so a plain
+      // rename never rewrites the opening balance.
+      const balanceChanged =
+        parsedBalance !== null &&
+        (!editingBank || parsedBalance !== (editingBank.balance ?? 0));
+
+      const payload = {
+        name: bankName.trim(),
+        isActive: bankActive,
+        ...(isAdmin && balanceChanged ? { balance: parsedBalance } : {}),
+      };
       const url = editingBank ? `/api/banks/${editingBank.id}` : "/api/banks";
       const method = editingBank ? "PUT" : "POST";
 
@@ -195,6 +227,15 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
   }
 
   const activeBanks = banks.filter((b) => b.isActive);
+
+  // How far the typed balance sits from what the recorded movements alone give.
+  const adjustmentPreview = (() => {
+    if (!editingBank) return null;
+    const typed = Number(bankBalance.trim());
+    if (bankBalance.trim() === "" || !Number.isFinite(typed)) return null;
+    const next = typed - (editingBank.movements ?? 0);
+    return Math.abs(next) < 0.005 ? null : next;
+  })();
 
   const actionButtons = (
     <div className="flex w-full flex-wrap items-stretch gap-2 sm:w-auto sm:justify-end">
@@ -296,7 +337,14 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                           <Landmark className="h-4 w-4 text-primary" />
                         </div>
-                        <p className="font-medium truncate">{bank.name}</p>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{bank.name}</p>
+                          {isAdmin && Math.abs(bank.openingBalance ?? 0) >= 0.005 && (
+                            <p className="text-xs text-muted-foreground">
+                              incl. {formatCurrency(bank.openingBalance ?? 0)} opening balance
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <p className="text-lg font-bold tabular-nums text-primary sm:text-right">
                         {formatCurrency(bank.balance ?? 0)}
@@ -335,7 +383,8 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
           )}
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Balances include payments received, expenses paid, and transfers between accounts.
+            Balances include payments received, expenses paid, transfers between accounts, and any
+            opening balance set on the account.
           </p>
         </>
       )}
@@ -350,7 +399,7 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
         description={isAdmin ? undefined : "New banks are active for payments immediately"}
         className="max-w-md"
       >
-        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 px-4 py-4 sm:px-6">
           {error && (
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
               {error}
@@ -365,6 +414,31 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
               required
             />
           </div>
+          {isAdmin && (
+            <div className="space-y-2">
+              <Label>{editingBank ? "Current Balance" : "Starting Balance"}</Label>
+              <Input
+                type="number"
+                step="0.01"
+                inputMode="decimal"
+                value={bankBalance}
+                onChange={(e) => setBankBalance(e.target.value)}
+                placeholder="0"
+              />
+              <p className="text-xs text-muted-foreground">
+                {editingBank
+                  ? "Set what this account actually holds. Payments, expenses and transfers stay as recorded — the difference is kept as an opening balance adjustment."
+                  : "Money already in this account before the system starts tracking it."}
+              </p>
+              {editingBank && adjustmentPreview !== null && (
+                <p className="text-xs font-medium text-warning">
+                  Adjustment: {adjustmentPreview >= 0 ? "+" : ""}
+                  {formatCurrency(adjustmentPreview)} against recorded movements of{" "}
+                  {formatCurrency(editingBank.movements ?? 0)}.
+                </p>
+              )}
+            </div>
+          )}
           {isAdmin ? (
             <div className="space-y-2">
               <Label>Status</Label>
@@ -416,7 +490,7 @@ export function BanksPanel({ user, embedded = false, className }: BanksPanelProp
         description="Move funds from one bank account to another"
         className="max-w-md"
       >
-        <form onSubmit={handleTransferSubmit} className="px-6 py-4 space-y-4">
+        <form onSubmit={handleTransferSubmit} className="space-y-4 px-4 py-4 sm:px-6">
           {transferError && (
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
               {transferError}

@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { decimalToNumber } from "@/lib/utils";
 import { buildClientCreditData } from "@/lib/client-credit";
+import { LEDGER_ENTRY_INCLUDE, shapeLedgerEntry } from "@/lib/ledger-entry";
 import { isSalesperson, requireSalespersonShopId } from "@/lib/shop-scope";
 
 export async function GET() {
@@ -18,10 +19,7 @@ export async function GET() {
     const [ledgerEntries, clientData] = await Promise.all([
       prisma.salespersonLedger.findMany({
         where: { userId: session.id },
-        include: {
-          sale: { select: { saleNumber: true } },
-          expense: { select: { description: true, category: true } },
-        },
+        include: LEDGER_ENTRY_INCLUDE,
         orderBy: { entryDate: "desc" },
       }),
       buildClientCreditData({ shopId, saleTypes: ["RETAIL"] }),
@@ -56,6 +54,9 @@ export async function GET() {
       clientsOweYou: clientData.clientCredit,
       clientBalances: clientData.clientBalances,
       creditSales: clientData.creditSales,
+      // The salesperson's own credit-to-owner ledger, with the sale behind each
+      // row, for the Balance page's owner-credit tab.
+      ownerEntries: ledgerEntries.map(shapeLedgerEntry),
       ledgerEntries: ledgerEntries.map((entry) => ({
         id: entry.id,
         type: entry.type,

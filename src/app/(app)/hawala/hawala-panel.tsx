@@ -13,7 +13,6 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +22,7 @@ import { Modal } from "@/components/ui/modal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, LoadingSpinner } from "@/components/layout/page-transition";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 import { Role } from "@prisma/client";
 
 interface HawalaReceiver {
@@ -57,7 +56,13 @@ interface Salesperson {
 
 type AdminTab = "transfers" | "receivers";
 
-export function HawalaClient({ user }: { user: { name: string; role: Role; email: string } }) {
+interface HawalaPanelProps {
+  user: { name: string; role: Role; email: string };
+  /** True when rendered as a tab of the Balance page rather than as its own page. */
+  embedded?: boolean;
+}
+
+export function HawalaPanel({ user, embedded = false }: HawalaPanelProps) {
   const isAdmin = user.role === Role.ADMIN;
 
   const [loading, setLoading] = useState(true);
@@ -87,10 +92,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
 
   const [error, setError] = useState<string | null>(null);
 
-  const activeReceivers = useMemo(
-    () => receivers.filter((r) => r.isActive),
-    [receivers]
-  );
+  const activeReceivers = useMemo(() => receivers.filter((r) => r.isActive), [receivers]);
 
   const myReceivers = useMemo(
     () => activeReceivers.filter((r) => !filterSalesperson || r.salespersonId === filterSalesperson),
@@ -315,27 +317,25 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.03 }}
-            className="flex flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4"
           >
-            <div className="space-y-1">
+            <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-semibold">{formatCurrency(transfer.amount)}</p>
                 <Badge variant={transfer.status === "CONFIRMED" ? "success" : "warning"}>
                   {transfer.status === "CONFIRMED" ? "Confirmed" : "Pending"}
                 </Badge>
               </div>
-              <p className="text-sm">
+              <p className="text-sm break-words">
                 To <span className="font-medium">{transfer.receiver.name}</span>
                 {transfer.receiver.phone && (
                   <span className="text-muted-foreground"> · {transfer.receiver.phone}</span>
                 )}
               </p>
               {isAdmin && (
-                <p className="text-sm text-muted-foreground">
-                  From {transfer.salesperson.name}
-                </p>
+                <p className="text-sm text-muted-foreground">From {transfer.salesperson.name}</p>
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground break-words">
                 {formatDateTime(transfer.transferDate)}
                 {transfer.notes && ` · ${transfer.notes}`}
               </p>
@@ -351,6 +351,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
                 size="sm"
                 onClick={() => handleConfirmTransfer(transfer.id)}
                 disabled={confirmingId === transfer.id}
+                className="w-full shrink-0 sm:w-auto"
               >
                 {confirmingId === transfer.id ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -385,28 +386,27 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.03 }}
-            className="flex flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-3 rounded-xl border border-border p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4"
           >
-            <div>
-              <p className="font-medium">{receiver.name}</p>
-              {receiver.phone && (
-                <p className="text-sm text-muted-foreground">{receiver.phone}</p>
-              )}
+            <div className="min-w-0">
+              <p className="font-medium break-words">{receiver.name}</p>
+              {receiver.phone && <p className="text-sm text-muted-foreground">{receiver.phone}</p>}
               {isAdmin && (
                 <p className="text-sm text-muted-foreground">
                   Salesperson: {receiver.salesperson.name}
                 </p>
               )}
               {receiver.notes && (
-                <p className="text-xs text-muted-foreground mt-1">{receiver.notes}</p>
+                <p className="mt-1 text-xs text-muted-foreground break-words">{receiver.notes}</p>
               )}
             </div>
             {isAdmin && (
-              <div className="flex gap-2">
+              <div className="flex shrink-0 gap-2">
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => openEditReceiver(receiver)}
+                  className="flex-1 sm:flex-none"
                 >
                   <Pencil className="h-4 w-4" />
                   Edit
@@ -416,6 +416,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
                   variant="outline"
                   onClick={() => handleDeactivateReceiver(receiver.id)}
                   disabled={actionLoadingId === receiver.id}
+                  className="flex-1 sm:flex-none"
                 >
                   {actionLoadingId === receiver.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -433,65 +434,17 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
   );
 
   return (
-    <DashboardLayout
-      user={user}
-      title="hw"
-      description={
-        isAdmin
-          ? "Track money transfers, confirm receipts, and manage receiving persons"
-          : "Send money to receiving persons assigned by admin"
-      }
-    >
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Pending Transfers"
-          value={String(stats.pendingCount)}
-          icon={<Clock className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Pending Amount"
-          value={formatCurrency(stats.pendingAmount)}
-          icon={<Send className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Confirmed Amount"
-          value={formatCurrency(stats.confirmedAmount)}
-          icon={<CheckCircle2 className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Assigned Receivers"
-          value={String(activeReceivers.length)}
-          icon={<Users className="h-5 w-5" />}
-        />
-      </div>
-
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        {isAdmin && (
-          <>
-            <Select
-              value={filterSalesperson}
-              onChange={(e) => setFilterSalesperson(e.target.value)}
-              className="w-52"
-            >
-              <option value="">All salespersons</option>
-              {salespersons.map((sp) => (
-                <option key={sp.id} value={sp.id}>
-                  {sp.name}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-40"
-            >
-              <option value="">All statuses</option>
-              <option value="PENDING">Pending</option>
-              <option value="CONFIRMED">Confirmed</option>
-            </Select>
-          </>
-        )}
-        <div className="ml-auto flex flex-wrap gap-2">
+    <section>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className={cn("font-semibold", embedded ? "text-base" : "text-lg")}>hw</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {isAdmin
+              ? "Track money transfers, confirm receipts, and manage receiving persons"
+              : "Send money to receiving persons assigned by admin"}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           {!isAdmin && (
             <Button
               onClick={() => {
@@ -499,19 +452,73 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
                 setShowTransferModal(true);
               }}
               disabled={activeReceivers.length === 0}
+              className="w-full sm:w-auto"
             >
               <Send className="h-4 w-4" />
               New Transfer
             </Button>
           )}
           {isAdmin && adminTab === "receivers" && (
-            <Button onClick={openAddReceiver}>
+            <Button onClick={openAddReceiver} className="w-full sm:w-auto">
               <UserPlus className="h-4 w-4" />
               Add Receiver
             </Button>
           )}
         </div>
       </div>
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+        <StatCard
+          compact
+          title="Pending Transfers"
+          value={String(stats.pendingCount)}
+          icon={<Clock className="h-4 w-4" />}
+        />
+        <StatCard
+          compact
+          title="Pending Amount"
+          value={formatCurrency(stats.pendingAmount)}
+          icon={<Send className="h-4 w-4" />}
+        />
+        <StatCard
+          compact
+          title="Confirmed Amount"
+          value={formatCurrency(stats.confirmedAmount)}
+          icon={<CheckCircle2 className="h-4 w-4" />}
+        />
+        <StatCard
+          compact
+          title="Assigned Receivers"
+          value={String(activeReceivers.length)}
+          icon={<Users className="h-4 w-4" />}
+        />
+      </div>
+
+      {isAdmin && (
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <Select
+            value={filterSalesperson}
+            onChange={(e) => setFilterSalesperson(e.target.value)}
+            className="w-full sm:w-52"
+          >
+            <option value="">All salespersons</option>
+            {salespersons.map((sp) => (
+              <option key={sp.id} value={sp.id}>
+                {sp.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="w-full sm:w-40"
+          >
+            <option value="">All statuses</option>
+            <option value="PENDING">Pending</option>
+            <option value="CONFIRMED">Confirmed</option>
+          </Select>
+        </div>
+      )}
 
       {error && !showTransferModal && !showReceiverModal && (
         <p className="mb-4 text-sm text-destructive">{error}</p>
@@ -526,6 +533,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
               variant={adminTab === "transfers" ? "primary" : "outline"}
               size="sm"
               onClick={() => setAdminTab("transfers")}
+              className="flex-1 sm:flex-none"
             >
               Transfers
             </Button>
@@ -533,13 +541,16 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
               variant={adminTab === "receivers" ? "primary" : "outline"}
               size="sm"
               onClick={() => setAdminTab("receivers")}
+              className="flex-1 sm:flex-none"
             >
               Receivers
             </Button>
           </div>
           <Card>
             <CardHeader>
-              <CardTitle>{adminTab === "transfers" ? "Money Transfers" : "Receiving Persons"}</CardTitle>
+              <CardTitle>
+                {adminTab === "transfers" ? "Money Transfers" : "Receiving Persons"}
+              </CardTitle>
             </CardHeader>
             <CardContent>{adminTab === "transfers" ? transferList : receiverList}</CardContent>
           </Card>
@@ -547,7 +558,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle>My Receivers</CardTitle>
               <Button
                 size="sm"
@@ -556,6 +567,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
                   setShowTransferModal(true);
                 }}
                 disabled={activeReceivers.length === 0}
+                className="w-full sm:w-auto"
               >
                 <Send className="h-4 w-4" />
                 Send
@@ -579,7 +591,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
         description="Send money to an assigned receiving person"
         className="max-w-md"
       >
-        <form onSubmit={handleCreateTransfer} className="space-y-4 px-6 py-4">
+        <form onSubmit={handleCreateTransfer} className="space-y-4 px-4 py-4 sm:px-6">
           <div className="space-y-2">
             <Label>Receiver *</Label>
             <Select
@@ -602,6 +614,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
               type="number"
               step="0.01"
               min="0.01"
+              inputMode="decimal"
               value={transferAmount}
               onChange={(e) => setTransferAmount(e.target.value)}
               placeholder="Amount to send"
@@ -617,7 +630,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex gap-3 pt-1">
+          <div className="flex flex-col gap-3 pt-1 sm:flex-row">
             <Button
               type="button"
               variant="outline"
@@ -647,7 +660,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
         description="Assign a receiving person to a salesperson"
         className="max-w-md"
       >
-        <form onSubmit={handleSaveReceiver} className="space-y-4 px-6 py-4">
+        <form onSubmit={handleSaveReceiver} className="space-y-4 px-4 py-4 sm:px-6">
           {!editingReceiver && (
             <div className="space-y-2">
               <Label>Salesperson *</Label>
@@ -677,6 +690,8 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
           <div className="space-y-2">
             <Label>Phone</Label>
             <Input
+              type="tel"
+              inputMode="tel"
               value={receiverPhone}
               onChange={(e) => setReceiverPhone(e.target.value)}
               placeholder="Phone number"
@@ -691,7 +706,7 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex gap-3 pt-1">
+          <div className="flex flex-col gap-3 pt-1 sm:flex-row">
             <Button
               type="button"
               variant="outline"
@@ -713,6 +728,6 @@ export function HawalaClient({ user }: { user: { name: string; role: Role; email
           </div>
         </form>
       </Modal>
-    </DashboardLayout>
+    </section>
   );
 }

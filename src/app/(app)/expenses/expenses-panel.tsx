@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Plus, Receipt, Pencil, Trash2, DollarSign, CalendarDays, Hash, Search } from "lucide-react";
-import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,11 +27,11 @@ function toDatetimeLocalValue(date = new Date()) {
 
 type PeriodMode = "today" | "7d" | "30d" | "all" | "custom";
 
-const PERIOD_OPTIONS: { key: PeriodMode; label: string }[] = [
-  { key: "today", label: "Today" },
-  { key: "7d", label: "Last 7 Days" },
-  { key: "30d", label: "Last 30 Days" },
-  { key: "all", label: "All Time" },
+const PERIOD_OPTIONS: { key: PeriodMode; label: string; shortLabel: string }[] = [
+  { key: "today", label: "Today", shortLabel: "Today" },
+  { key: "7d", label: "Last 7 Days", shortLabel: "7 Days" },
+  { key: "30d", label: "Last 30 Days", shortLabel: "30 Days" },
+  { key: "all", label: "All Time", shortLabel: "All" },
 ];
 
 function toDateInputValue(date: Date) {
@@ -75,7 +74,7 @@ function isInPeriod(expenseDate: string, period: PeriodMode, customDate: string)
   return date >= start && date <= end;
 }
 
-function periodFilterStyles(key: PeriodMode, active: boolean) {
+function periodFilterStyles(active: boolean) {
   if (!active) {
     return "border border-border bg-surface hover:border-primary/30 hover:bg-secondary";
   }
@@ -95,7 +94,13 @@ interface Expense {
   bankAccount?: { id: string; name: string } | null;
 }
 
-export function ExpensesClient({ user }: { user: { name: string; role: Role; email: string } }) {
+interface ExpensesPanelProps {
+  user: { name: string; role: Role; email: string };
+  /** True when rendered as a tab of the Balance page rather than as its own page. */
+  embedded?: boolean;
+}
+
+export function ExpensesPanel({ user, embedded = false }: ExpensesPanelProps) {
   const isShopStaff = user.role === Role.SALESPERSON;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [banks, setBanks] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
@@ -112,13 +117,15 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
   const [period, setPeriod] = useState<PeriodMode>("30d");
   const [customDate, setCustomDate] = useState(() => toDateInputValue(new Date()));
 
-  const expenseCategories = useMemo(
-    () => [...new Set(expenses.map((e) => e.description).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+  const pastCategories = useMemo(
+    () =>
+      [...new Set(expenses.map((e) => e.description).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b)
+      ),
     [expenses]
   );
 
   const activeBanks = useMemo(() => banks.filter((b) => b.isActive), [banks]);
-  const pastCategories = expenseCategories;
 
   const summary = useMemo(() => {
     const totalAmount = expenses.reduce((sum, expense) => sum + parseAmount(expense.amount), 0);
@@ -143,11 +150,7 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
 
       if (!query) return true;
 
-      const haystack = [
-        expense.description,
-        expense.bankAccount?.name,
-        formatCurrency(expense.amount),
-      ]
+      const haystack = [expense.description, expense.bankAccount?.name, formatCurrency(expense.amount)]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -157,7 +160,10 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
   }, [expenses, search, period, customDate]);
 
   const filteredSummary = useMemo(() => {
-    const totalAmount = filteredExpenses.reduce((sum, expense) => sum + parseAmount(expense.amount), 0);
+    const totalAmount = filteredExpenses.reduce(
+      (sum, expense) => sum + parseAmount(expense.amount),
+      0
+    );
     return {
       count: filteredExpenses.length,
       totalAmount,
@@ -175,7 +181,10 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
 
   useEffect(() => {
     loadExpenses();
-    fetch("/api/banks").then((r) => r.json()).then(setBanks).catch(() => {});
+    fetch("/api/banks")
+      .then((r) => r.json())
+      .then(setBanks)
+      .catch(() => {});
   }, []);
 
   function resetForm() {
@@ -216,11 +225,14 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
         bankAccountId,
       };
 
-      const res = await fetch(editingExpenseId ? `/api/expenses/${editingExpenseId}` : "/api/expenses", {
-        method: editingExpenseId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(
+        editingExpenseId ? `/api/expenses/${editingExpenseId}` : "/api/expenses",
+        {
+          method: editingExpenseId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || `Failed to ${editingExpenseId ? "update" : "create"} expense`);
@@ -279,7 +291,14 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
       </div>
       <div className="space-y-2">
         <Label>Amount *</Label>
-        <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <Input
+          type="number"
+          step="0.01"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          required
+        />
       </div>
       <div className="space-y-2">
         <Label>Date &amp; Time *</Label>
@@ -305,16 +324,17 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
         </p>
         {activeBanks.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            No banks configured. Add banks in Bank Accounts first.
+            No banks configured. Add banks{" "}
+            {isShopStaff ? "on the Banks page" : "in the Bank Accounts tab"} first.
           </p>
         )}
       </div>
       {isShopStaff && (
-        <div className="md:col-span-2 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground md:col-span-2">
           This expense is deducted from money you owe {OWNER_NAME}.
         </div>
       )}
-      <div className="md:col-span-2 flex gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row md:col-span-2">
         <Button type="button" variant="outline" onClick={closeForm} className="flex-1">
           Cancel
         </Button>
@@ -326,20 +346,21 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
   );
 
   return (
-    <DashboardLayout
-      user={user}
-      title="Expenses"
-      description={
-        isShopStaff
-          ? "Record shop expenses paid from your collected money"
-          : "Track warehouse, shop, tax and other costs"
-      }
-      action={
-        <Button onClick={openForm}>
+    <section>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className={cn("font-semibold", embedded ? "text-base" : "text-lg")}>Expenses</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {isShopStaff
+              ? "Record shop expenses paid from your collected money"
+              : "Warehouse, shop, tax and other costs"}
+          </p>
+        </div>
+        <Button onClick={openForm} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" /> Add Expense
         </Button>
-      }
-    >
+      </div>
+
       <Modal
         open={showForm}
         onClose={closeForm}
@@ -353,7 +374,7 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
         }
         className="max-w-2xl"
       >
-        <div className="px-6 py-4">{expenseForm}</div>
+        <div className="px-4 py-4 sm:px-6">{expenseForm}</div>
       </Modal>
 
       {loading ? (
@@ -398,7 +419,7 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
             />
           ) : (
             <>
-              <div className="mb-4 rounded-xl border border-border bg-muted/20 p-4 space-y-4">
+              <div className="mb-4 space-y-4 rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -409,25 +430,26 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
                   />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {PERIOD_OPTIONS.map((option) => (
                       <button
                         key={option.key}
                         type="button"
                         onClick={() => setPeriod(option.key)}
                         className={cn(
-                          "rounded-full px-4 py-2 text-sm font-medium transition-all duration-200",
-                          periodFilterStyles(option.key, period === option.key)
+                          "shrink-0 rounded-full px-3 py-2 text-sm font-medium transition-all duration-200 sm:px-4",
+                          periodFilterStyles(period === option.key)
                         )}
                       >
-                        {option.label}
+                        <span className="sm:hidden">{option.shortLabel}</span>
+                        <span className="hidden sm:inline">{option.label}</span>
                       </button>
                     ))}
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Label className="text-sm text-muted-foreground shrink-0">Specific date</Label>
+                    <Label className="shrink-0 text-sm text-muted-foreground">Specific date</Label>
                     <Input
                       type="date"
                       value={customDate}
@@ -436,8 +458,8 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
                         setPeriod("custom");
                       }}
                       className={cn(
-                        "w-auto min-w-[160px]",
-                        period === "custom" && "ring-2 ring-primary/30 border-primary"
+                        "w-full sm:w-auto sm:min-w-[160px]",
+                        period === "custom" && "border-primary ring-2 ring-primary/30"
                       )}
                     />
                   </div>
@@ -450,13 +472,13 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
                         setPeriod("30d");
                         setCustomDate(toDateInputValue(new Date()));
                       }}
-                      className="text-xs text-primary hover:underline"
+                      className="self-start text-xs text-primary hover:underline"
                     >
                       Clear filters
                     </button>
                   )}
 
-                  <span className="ml-auto text-xs text-muted-foreground">
+                  <span className="text-xs text-muted-foreground sm:ml-auto">
                     Showing {filteredSummary.count} of {expenses.length}
                     {filteredSummary.count > 0 && ` · ${formatCurrency(filteredSummary.totalAmount)}`}
                   </span>
@@ -464,61 +486,69 @@ export function ExpensesClient({ user }: { user: { name: string; role: Role; ema
               </div>
 
               {filteredExpenses.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No matching expenses</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No matching expenses
+                </p>
               ) : (
-            <div className="space-y-3">
-              {filteredExpenses.map((expense, index) => {
-                const isActionLoading = actionLoadingId === expense.id;  return (
-                <motion.div key={expense.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.03 }}>
-                  <Card hover>
-                    <CardContent className="flex items-center justify-between gap-4 p-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold">{expense.description}</p>
-                        </div>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {formatDateTime(expense.expenseDate)}
-                          {expense.bankAccount && ` · ${expense.bankAccount.name}`}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <p className="text-lg font-bold text-destructive">-{formatCurrency(expense.amount)}</p>
-                        <div className="flex gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={isActionLoading}
-                            onClick={() => openEditForm(expense)}
-                            aria-label="Edit expense"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={isActionLoading}
-                            loading={isActionLoading}
-                            onClick={() => handleDelete(expense)}
-                            aria-label="Delete expense"
-                            className="text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-                );
-              })}
-            </div>
+                <div className="space-y-3">
+                  {filteredExpenses.map((expense, index) => {
+                    const isActionLoading = actionLoadingId === expense.id;
+                    return (
+                      <motion.div
+                        key={expense.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.03 }}
+                      >
+                        <Card hover>
+                          <CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-4">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold break-words">{expense.description}</p>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                {formatDateTime(expense.expenseDate)}
+                                {expense.bankAccount && ` · ${expense.bankAccount.name}`}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+                              <p className="text-lg font-bold text-destructive">
+                                -{formatCurrency(expense.amount)}
+                              </p>
+                              <div className="flex gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={isActionLoading}
+                                  onClick={() => openEditForm(expense)}
+                                  aria-label="Edit expense"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={isActionLoading}
+                                  loading={isActionLoading}
+                                  onClick={() => handleDelete(expense)}
+                                  aria-label="Delete expense"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               )}
             </>
           )}
         </>
       )}
-    </DashboardLayout>
+    </section>
   );
 }

@@ -66,11 +66,17 @@ export async function GET() {
 
     const balances = banks.map((bank) => {
       const stats = totalsByBank.get(bank.id);
+      const movements = stats?.balance ?? 0;
+      const openingBalance = decimalToNumber(bank.openingBalance);
       return {
         id: bank.id,
         name: bank.name,
         isActive: bank.isActive,
-        balance: stats?.balance ?? 0,
+        openingBalance,
+        // What payments, expenses and transfers add up to on their own — the
+        // Set-balance form needs it to work out a new opening balance.
+        movements,
+        balance: openingBalance + movements,
         paymentCount: stats?.paymentCount ?? 0,
       };
     });

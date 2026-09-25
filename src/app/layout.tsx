@@ -28,6 +28,11 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#2f7d62",
+  width: "device-width",
+  initialScale: 1,
+  // Let the app paint under the notch/home indicator; safe-area insets are
+  // applied by the mobile header, drawer and page padding.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

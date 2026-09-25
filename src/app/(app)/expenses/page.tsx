@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { ExpensesClient } from "./expenses-client";
 
+/** Expenses is a tab of the Balance page; this route only keeps old links working. */
 export default async function ExpensesPage() {
   const session = await getSession();
   if (!session) redirect("/login");
-  return <ExpensesClient user={session} />;
+  redirect("/balance?tab=expenses");
 }

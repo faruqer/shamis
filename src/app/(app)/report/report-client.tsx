@@ -355,12 +355,12 @@ export function ReportClient({
         )}
 
         <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
+          <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
             <Label className="text-xs text-muted-foreground">Period</Label>
             <Select
               value={periodMode}
               onChange={(e) => setPeriodMode(e.target.value as PeriodMode)}
-              className="w-40 h-9 text-sm"
+              className="h-9 w-full text-sm sm:w-40"
             >
               {PERIOD_OPTIONS.map((p) => (
                 <option key={p.key} value={p.key}>
@@ -371,35 +371,35 @@ export function ReportClient({
           </div>
 
           {periodMode === "day" && (
-            <div className="space-y-1">
+            <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
               <Label className="text-xs text-muted-foreground">Date</Label>
               <Input
                 type="date"
                 value={specificDate}
                 onChange={(e) => setSpecificDate(e.target.value)}
-                className="w-40 h-9 text-sm"
+                className="h-9 w-full text-sm sm:w-40"
               />
             </div>
           )}
 
           {periodMode === "range" && (
             <>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">From</Label>
                 <Input
                   type="date"
                   value={rangeFrom}
                   onChange={(e) => setRangeFrom(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 />
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">To</Label>
                 <Input
                   type="date"
                   value={rangeTo}
                   onChange={(e) => setRangeTo(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 />
               </div>
             </>
@@ -407,12 +407,12 @@ export function ReportClient({
 
           {user.role === Role.ADMIN && (
             <>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Channel</Label>
                 <Select
                   value={channel}
                   onChange={(e) => setChannel(e.target.value as Channel)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   {CHANNEL_OPTIONS.map((option) => (
                     <option key={option.key} value={option.key}>
@@ -421,12 +421,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Sale type</Label>
                 <Select
                   value={saleType}
                   onChange={(e) => setSaleType(e.target.value as SaleTypeFilter)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   {SALE_TYPE_OPTIONS.map((option) => (
                     <option key={option.key} value={option.key}>
@@ -435,12 +435,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Payment</Label>
                 <Select
                   value={paymentStatus}
                   onChange={(e) => setPaymentStatus(e.target.value as PaymentStatusFilter)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   {PAYMENT_STATUS_OPTIONS.map((option) => (
                     <option key={option.key} value={option.key}>
@@ -449,12 +449,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Shop</Label>
                 <Select
                   value={shopId}
                   onChange={(e) => setShopId(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   <option value="">All shops</option>
                   {filterOptions.shops.map((shop) => (
@@ -464,12 +464,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Salesperson</Label>
                 <Select
                   value={salespersonId}
                   onChange={(e) => setSalespersonId(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   <option value="">All salespersons</option>
                   {filterOptions.salespersons.map((sp) => (
@@ -479,12 +479,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Expense bank</Label>
                 <Select
                   value={bankAccountId}
                   onChange={(e) => setBankAccountId(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   <option value="">All banks</option>
                   {filterOptions.banks.map((bank) => (
@@ -494,12 +494,12 @@ export function ReportClient({
                   ))}
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="min-w-[140px] flex-1 space-y-1 sm:flex-none">
                 <Label className="text-xs text-muted-foreground">Deposit bank</Label>
                 <Select
                   value={depositBankId}
                   onChange={(e) => setDepositBankId(e.target.value)}
-                  className="w-40 h-9 text-sm"
+                  className="h-9 w-full text-sm sm:w-40"
                 >
                   <option value="">All banks</option>
                   {filterOptions.banks.map((bank) => (
@@ -1005,7 +1005,7 @@ export function ReportClient({
                   </CardHeader>
                   <CardContent>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full min-w-[560px] text-sm">
                         <thead>
                           <tr className="border-b border-border text-left text-xs text-muted-foreground">
                             <th className="pb-2 pr-3">Product</th>
@@ -1096,19 +1096,19 @@ export function ReportClient({
 
           {isAdmin && data.recentSales && data.recentSales.length > 0 && (
             <Card hover className="mb-6">
-              <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+              <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-base">Recent Sales in Period</CardTitle>
                 <Input
                   type="search"
                   placeholder="Search sales…"
                   value={tableSearch}
                   onChange={(e) => setTableSearch(e.target.value)}
-                  className="h-8 w-48 text-sm"
+                  className="h-8 w-full text-sm sm:w-48"
                 />
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[760px] text-sm">
                     <thead>
                       <tr className="border-b border-border text-left text-xs text-muted-foreground">
                         <th className="pb-2 pr-3">Sale #</th>

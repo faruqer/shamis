@@ -258,7 +258,7 @@ export function ClientCreditSection({
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <Card hover>
             <CardHeader>
-              <CardTitle className="text-base">Client Credit Balances</CardTitle>
+              <CardTitle className="text-base">Customer Credit Balances</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="relative">
@@ -266,17 +266,17 @@ export function ClientCreditSection({
                 <Input
                   value={clientSearch}
                   onChange={(e) => setClientSearch(e.target.value)}
-                  placeholder="Search clients by name..."
+                  placeholder="Search customers by name..."
                   className="pl-9"
                 />
               </div>
 
               {data.clientBalances.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">
-                  No clients with credit history yet
+                  No customers with credit history yet
                 </p>
               ) : filteredClients.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No clients match your search</p>
+                <p className="text-sm text-muted-foreground text-center py-8">No customers match your search</p>
               ) : (
                 <div className="space-y-4 max-h-80 overflow-y-auto">
                   {clientsWithCredit.length > 0 && (
@@ -359,7 +359,7 @@ export function ClientCreditSection({
                 <Input
                   value={historySearch}
                   onChange={(e) => setHistorySearch(e.target.value)}
-                  placeholder="Search product, client, description, sale #..."
+                  placeholder="Search product, customer, description, sale #..."
                   className="pl-9"
                 />
               </div>
@@ -371,7 +371,7 @@ export function ClientCreditSection({
                       [
                         { key: "ALL", label: "All" },
                         { key: "OWNER", label: toOwnerLabel() },
-                        { key: "CLIENT", label: "From Client" },
+                        { key: "CLIENT", label: "From Customer" },
                       ] as const
                     ).map((option) => (
                       <button
@@ -449,7 +449,7 @@ export function ClientCreditSection({
                         <div className="flex flex-wrap items-center gap-2 mb-0.5">
                           {includeOwnerHistory && (
                             <Badge variant={entry.category === "OWNER" ? "warning" : "success"}>
-                              {entry.category === "OWNER" ? toOwnerLabel() : "From Client"}
+                              {entry.category === "OWNER" ? toOwnerLabel() : "From Customer"}
                             </Badge>
                           )}
                           <Badge variant={historyTypeBadgeVariant(entry.type)}>

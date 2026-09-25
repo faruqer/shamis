@@ -31,7 +31,7 @@ export function Modal({ open, onClose, title, description, children, className }
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -40,18 +40,18 @@ export function Modal({ open, onClose, title, description, children, className }
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
             transition={{ duration: 0.2 }}
             className={cn(
-              "relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl",
+              "relative z-10 flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:max-h-[90vh] sm:rounded-2xl",
               className
             )}
             onClick={(e) => e.stopPropagation()}
           >
             {(title || description) && (
-              <div className="border-b border-border px-6 py-4">
+              <div className="border-b border-border px-4 py-4 sm:px-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     {title && <h2 className="text-lg font-semibold">{title}</h2>}
@@ -68,7 +68,9 @@ export function Modal({ open, onClose, title, description, children, className }
                 </div>
               </div>
             )}
-            <div className="overflow-y-auto flex-1">{children}</div>
+            <div className="flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)] sm:pb-0">
+              {children}
+            </div>
           </motion.div>
         </div>
       )}

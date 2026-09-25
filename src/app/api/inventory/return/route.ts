@@ -68,7 +68,9 @@ export async function POST(request: NextRequest) {
           userId: shopSalesperson.id,
           type: LedgerType.ADJUSTMENT,
           amount: -returnAmount,
-          description: `Stock returned to warehouse ${returnRef} · ${shopCarton.product.name}`,
+          // Quantities belong in the description: a return moves stock without writing a
+          // sale row, so this line is the only record of how much came back.
+          description: `Stock returned to warehouse ${returnRef} · ${shopCarton.product.name} · ${data.cartonsToReturn} cartons (${itemsReturned} items)`,
         },
       });
 

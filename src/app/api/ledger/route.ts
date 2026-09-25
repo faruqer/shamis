@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { requireSession } from "@/lib/auth";
 import { jsonResponse, handleApiError } from "@/lib/api-utils";
 import { decimalToNumber } from "@/lib/utils";
+import { LEDGER_ENTRY_INCLUDE, shapeLedgerEntry } from "@/lib/ledger-entry";
 import { Role } from "@prisma/client";
 
 export async function GET(request: Request) {
@@ -15,10 +16,7 @@ export async function GET(request: Request) {
 
     const entries = await prisma.salespersonLedger.findMany({
       where: { userId: targetUserId },
-      include: {
-        sale: { select: { saleNumber: true } },
-        expense: { select: { description: true, category: true } },
-      },
+      include: LEDGER_ENTRY_INCLUDE,
       orderBy: { entryDate: "desc" },
     });
 
@@ -50,7 +48,12 @@ export async function GET(request: Request) {
         )
       : [];
 
-    return jsonResponse({ entries, balance, users, salespersonBalances });
+    return jsonResponse({
+      entries: entries.map(shapeLedgerEntry),
+      balance,
+      users,
+      salespersonBalances,
+    });
   } catch (error) {
     return handleApiError(error);
   }
